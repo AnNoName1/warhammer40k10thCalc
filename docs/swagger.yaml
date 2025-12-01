@@ -1,0 +1,140 @@
+# Copyright (c) 2025 Olbutov Aleksandr
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
+basePath: /api
+definitions:
+  damagerequest.DamageRequest:
+    properties:
+      ap:
+        description: Armor penetration
+        type: integer
+      attacks_string:
+        description: e.g., "D6+2"
+        type: string
+      bs:
+        description: Ballistic Skill
+        type: integer
+      d:
+        description: Damage, e.g., "D3", "2"
+        type: string
+      devastating_wounds:
+        type: boolean
+      feel_no_pain:
+        description: Feel No Pain, optional
+        type: integer
+      hit_modifier:
+        type: integer
+      hit_reroll:
+        $ref: '#/definitions/damagerequest.RerollType'
+      invulnerable:
+        description: Pointers (*int) are used for optional fields. If the field is
+          omitted in JSON, the pointer will be nil.
+        type: integer
+      lethal_hits:
+        type: boolean
+      num_models:
+        type: integer
+      s:
+        description: Strength
+        type: integer
+      save:
+        description: Target Save
+        type: integer
+      save_modifier:
+        type: integer
+      t:
+        description: Target Toughness
+        type: integer
+      torrent:
+        type: boolean
+      wound_modifier:
+        type: integer
+      wound_reroll:
+        $ref: '#/definitions/damagerequest.RerollType'
+    type: object
+  damagerequest.DamageResponse:
+    properties:
+      average_destroyed:
+        type: number
+      average_hits:
+        type: number
+      destroyed_distribution:
+        additionalProperties:
+          format: float64
+          type: number
+        type: object
+      hits_distribution:
+        additionalProperties:
+          format: float64
+          type: number
+        type: object
+      message:
+        type: string
+      pens_distribution:
+        additionalProperties:
+          format: float64
+          type: number
+        type: object
+      wounds_distribution:
+        additionalProperties:
+          format: float64
+          type: number
+        type: object
+    type: object
+  damagerequest.RerollType:
+    enum:
+    - 0
+    - 1
+    - 2
+    type: integer
+    x-enum-varnames:
+    - RerollNone
+    - RerollOnes
+    - RerollFail
+host: localhost:8080
+info:
+  contact: {}
+  description: API for calculating damage statistics based on 10th Edition rules.
+  title: Warhammer 40k 10th Calc API
+  version: "1.0"
+paths:
+  /damage/calculate:
+    post:
+      consumes:
+      - application/json
+      description: Calculates statistical damage based on input parameters
+      parameters:
+      - description: Calculation Parameters
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/damagerequest.DamageRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/damagerequest.DamageResponse'
+      summary: Calculate Damage
+      tags:
+      - damage
+swagger: "2.0"

@@ -1,27 +1,4 @@
 # Standard Go Project Layout
-
-Translations:
-
-* [한국어 문서](README_ko.md)
-* [简体中文](README_zh.md)
-* [正體中文](README_zh-TW.md)
-* [简体中文](README_zh-CN.md) - ???
-* [Français](README_fr.md)
-* [日本語](README_ja.md)
-* [Português](README_ptBR.md)
-* [Español](README_es.md)
-* [Română](README_ro.md)
-* [Русский](README_ru.md)
-* [Türkçe](README_tr.md)
-* [Italiano](README_it.md)
-* [Tiếng Việt](README_vi.md)
-* [Українська](README_ua.md)
-* [Indonesian](README_id.md)
-* [हिन्दी](README_hi.md)
-* [فارسی](README_fa.md)
-* [Беларуская](README_be.md)
-* [বাংলা](README_bn.md)
-
 ## Overview
 
 This is a basic layout for Go application projects. Note that it's basic in terms of content because it's focusing only on the general layout and not what you have inside. It's also basic because it's very high level and it doesn't go into great details in terms of how you can structure your project even further. For example, it doesn't try to cover the project structure you'd have with something like Clean Architecture.

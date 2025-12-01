@@ -1,0 +1,172 @@
+{
+    "swagger": "2.0",
+    "info": {
+        "description": "API for calculating damage statistics based on 10th Edition rules.",
+        "title": "Warhammer 40k 10th Calc API",
+        "contact": {},
+        "version": "1.0"
+    },
+    "host": "localhost:8080",
+    "basePath": "/api",
+    "paths": {
+        "/damage/calculate": {
+            "post": {
+                "description": "Calculates statistical damage based on input parameters",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "damage"
+                ],
+                "summary": "Calculate Damage",
+                "parameters": [
+                    {
+                        "description": "Calculation Parameters",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/damagerequest.DamageRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/damagerequest.DamageResponse"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "definitions": {
+        "damagerequest.DamageRequest": {
+            "type": "object",
+            "properties": {
+                "ap": {
+                    "description": "Armor penetration",
+                    "type": "integer"
+                },
+                "attacks_string": {
+                    "description": "e.g., \"D6+2\"",
+                    "type": "string"
+                },
+                "bs": {
+                    "description": "Ballistic Skill",
+                    "type": "integer"
+                },
+                "d": {
+                    "description": "Damage, e.g., \"D3\", \"2\"",
+                    "type": "string"
+                },
+                "devastating_wounds": {
+                    "type": "boolean"
+                },
+                "feel_no_pain": {
+                    "description": "Feel No Pain, optional",
+                    "type": "integer"
+                },
+                "hit_modifier": {
+                    "type": "integer"
+                },
+                "hit_reroll": {
+                    "$ref": "#/definitions/damagerequest.RerollType"
+                },
+                "invulnerable": {
+                    "description": "Pointers (*int) are used for optional fields. If the field is omitted in JSON, the pointer will be nil.",
+                    "type": "integer"
+                },
+                "lethal_hits": {
+                    "type": "boolean"
+                },
+                "num_models": {
+                    "type": "integer"
+                },
+                "s": {
+                    "description": "Strength",
+                    "type": "integer"
+                },
+                "save": {
+                    "description": "Target Save",
+                    "type": "integer"
+                },
+                "save_modifier": {
+                    "type": "integer"
+                },
+                "t": {
+                    "description": "Target Toughness",
+                    "type": "integer"
+                },
+                "torrent": {
+                    "type": "boolean"
+                },
+                "wound_modifier": {
+                    "type": "integer"
+                },
+                "wound_reroll": {
+                    "$ref": "#/definitions/damagerequest.RerollType"
+                }
+            }
+        },
+        "damagerequest.DamageResponse": {
+            "type": "object",
+            "properties": {
+                "average_destroyed": {
+                    "type": "number"
+                },
+                "average_hits": {
+                    "type": "number"
+                },
+                "destroyed_distribution": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "number",
+                        "format": "float64"
+                    }
+                },
+                "hits_distribution": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "number",
+                        "format": "float64"
+                    }
+                },
+                "message": {
+                    "type": "string"
+                },
+                "pens_distribution": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "number",
+                        "format": "float64"
+                    }
+                },
+                "wounds_distribution": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "number",
+                        "format": "float64"
+                    }
+                }
+            }
+        },
+        "damagerequest.RerollType": {
+            "type": "integer",
+            "enum": [
+                0,
+                1,
+                2
+            ],
+            "x-enum-varnames": [
+                "RerollNone",
+                "RerollOnes",
+                "RerollFail"
+            ]
+        }
+    }
+}
