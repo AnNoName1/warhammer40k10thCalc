@@ -1,0 +1,36 @@
+name: Build Go Server
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: golang:1.22
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify Go version
+        run: go version
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Install addlicense
+        run: go install github.com/google/addlicense@latest
+
+      - name: Apply license headers
+        run: |
+          /go/bin/addlicense -c "Olbutov Aleksandr" -l mit .
+
+      - name: Build Go server
+        run: go build -o server ./cmd/server
+
+      # - name: Run tests
+      #  run: go test ./...
