@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	// Assuming 'damagerequest' is accessible or you define RerollType in this package for testing
+	
 	. "github.com/AnNoName1/warhammer40k10thCalc/pkg/models"
 )
 
