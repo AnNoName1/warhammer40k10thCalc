@@ -29,6 +29,7 @@ import (
 	damagerequest "github.com/AnNoName1/warhammer40k10thCalc/pkg/models"
 
 	calculator "github.com/AnNoName1/warhammer40k10thCalc/internal/calculator"
+	middleware "github.com/AnNoName1/warhammer40k10thCalc/internal/middleware"
 )
 
 // CalculateDamageHandler calculates the expected damage.
@@ -38,42 +39,44 @@ import (
 //	@Tags			damage
 //	@Accept			json
 //	@Produce		json
-//	@Param			request	body		damagerequest.DamageRequest	true	"Calculation Parameters"
-//	@Success		200		{object}	damagerequest.DamageResponse
+//	@Param			X-Request-ID	header		string						false	"Request UUID"
+//	@Param			request			body		damagerequest.DamageRequest	true	"Calculation Parameters"
+//	@Success		200				{object}	damagerequest.DamageResponse
 //	@Router			/damage/calculate [post]
 func CalculateDamageHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		// Use the helper for Method Not Allowed
+		SendError(w, "", "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// 1. Decode the Request Body
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		http.Error(w, "Failed to read request body", http.StatusInternalServerError)
-		return
-	}
+	reqID := middleware.GetRequestID(r.Context())
 
 	var req damagerequest.DamageRequest
-	if err := json.Unmarshal(body, &req); err != nil {
-		log.Printf("Error decoding JSON: %v", err)
-		http.Error(w, "Invalid JSON format: "+err.Error(), http.StatusBadRequest)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Printf("[%s] JSON decode error: %v", reqID, err)
+		msg := "Malformed JSON or invalid data types"
+		if err == io.EOF {
+			msg = "Request body cannot be empty"
+		}
+		// Use the helper for 400 errors
+		SendError(w, reqID, msg, http.StatusBadRequest)
 		return
 	}
 
-	// 2. Call Core Business Logic
 	resp, err := calculator.CalculateDamageCore(req)
 	if err != nil {
-		log.Printf("Calculation error: %v", err)
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		log.Printf("[%s] Calculation error: %v", reqID, err)
+		// Use the helper for business logic errors
+		SendError(w, reqID, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	// 3. Encode the Response Body
+	resp.RequestUUID = reqID
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		log.Printf("Error encoding JSON response: %v", err)
+		log.Printf("[%s] Error encoding JSON response: %v", reqID, err)
 	}
 }

@@ -43,6 +43,8 @@ type DamageRequest struct {
 	LethalHits        bool `json:"lethal_hits,omitempty"`
 	DevastatingWounds bool `json:"devastating_wounds,omitempty"`
 	Torrent           bool `json:"torrent,omitempty"`
+	// RequestUUID is populated by server middleware and is not required from clients.
+	RequestUUID string `json:"request_uuid,omitempty"`
 }
 
 // DamageResponse defines the structure of the JSON response sent back to the client.
@@ -54,4 +56,6 @@ type DamageResponse struct {
 	WoundsDistribution    map[int]float64 `json:"wounds_distribution"`
 	DestroyedDistribution map[int]float64 `json:"destroyed_distribution"`
 	Message               string          `json:"message"`
+	// RequestUUID echoes the request UUID assigned by middleware.
+	RequestUUID string `json:"request_uuid,omitempty"`
 }
