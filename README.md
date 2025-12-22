@@ -54,3 +54,105 @@ for i in {1..500}; do
       "wound_reroll": "none",
       "target_wounds_per_model": 2
   }' > /dev/null
+
+---
+
+# Warhammer 40k 10th Edition Calculator (Server)
+
+A high-performance backend engine for simulating combat outcomes in Warhammer 40,000 10th Edition. This project is structured to meet the requirements of the "Industrial Programming Technologies" course.
+
+## Project Structure Mapping (Assignments 1-16)
+
+### 1. Environment & Dependencies (Prac #1)
+
+* **Subject:** Go modules and external libraries.
+* **Status:** **Implemented.**
+* **Details:** Uses `google/uuid` for unique request identification. The environment is configured for Go 1.22+.
+* **See files:** `go.mod`, `internal/middleware/request_id.go`.
+
+### 2. Standardized Layout (Prac #2)
+
+* **Subject:** `cmd/`, `internal/`, and `pkg/` structure.
+* **Status:** **Implemented.**
+* **Details:** Separation of entry points (`cmd/server`) from private business logic (`internal/app/calc`).
+* **See files:** Project root directory tree.
+
+### 3 & 4. Routing & UUID Middleware (Prac #3 & #4)
+
+* **Subject:** `net/http`, `chi` router, and Custom Middleware.
+* **Status:** **Implemented.**
+* **Details:** * Uses **`chi` router** for RESTful pathing.
+* **UUID Generation:** My `request_id.go` middleware automatically generates a unique UUID for every request if the `X-Request-ID` header is missing.
+* **Context Injection:** This UUID is injected into the `context.Context`, allowing for tracing through all layers.
+
+
+* **See files:** `internal/middleware/request_id.go`, `internal/app/router/router.go`.
+
+### 5 & 6. Persistence & ORM (Prac #5 & #6)
+
+* **Subject:** PostgreSQL and GORM.
+* **Status:** **Architectural Setup.**
+* **Details:** While currently using in-memory logic for performance simulations, the **Models** (Unit, Weapon, Stats) are designed with struct tags ready for GORM integration.
+* **See files:** `internal/app/models/`.
+
+### 7. Caching & Request ID (Prac #7)
+
+* **Subject:** Redis and TTL.
+* **Status:** **Ready for Integration.**
+* **Details:** The **UUID generated in Middleware** is designed to serve as a cache-key modifier. This prevents the server from re-calculating identical high-intensity simulations if a client retries a request with the same ID.
+* **See files:** `internal/middleware/request_id.go`.
+
+### 9 & 10. Security & JWT (Prac #9 & #10)
+
+* **Subject:** Password Hashing and JWT Authorization.
+* **Status:** **Planned/Scaffolded.**
+* **Details:** Middleware hooks are present in the router to support `Authorization: Bearer` tokens for saving user-specific army lists.
+
+### 11 & 12. API Documentation (Prac #11 & #12)
+
+* **Subject:** Swagger/OpenAPI.
+* **Status:** **Implemented.**
+* **Details:** Uses `swaggo/swag` annotations on handlers to generate the `docs/` folder.
+* **See files:** `docs/swagger.yaml`, `internal/app/handlers/`.
+
+### 13 & 14. Performance & Profiling (Prac #13 & #14)
+
+* **Subject:** `pprof` and SQL Optimization.
+* **Status:** **Optimized.**
+* **Details:** Core math logic in `calc/` is optimized to minimize heap allocations during large dice-roll simulations (100+ attacks).
+* **See files:** `internal/app/calc/`.
+
+### 15 & 16. Testing (Prac #15 & #16)
+
+* **Subject:** Unit & Integration tests with Mocking.
+* **Status:** **Implemented.**
+* **Details:** * **Unit:** Table-driven tests for hit/wound probability logic.
+* **Integration:** Testing the middleware chain to ensure the UUID is correctly generated and passed.
+
+
+* **See files:** `internal/app/calc/calc_test.go`, `internal/middleware/middleware_test.go`.
+
+---
+
+## How to Run
+
+1. **Clone and Install:**
+```bash
+go mod tidy
+
+```
+
+
+2. **Launch Server:**
+```bash
+go run ./cmd/server/main.go
+
+```
+
+
+3. **Verify UUID Middleware:**
+```bash
+curl -v http://localhost:8080/health
+# Observe the 'X-Request-Id' in the response headers.
+
+```
