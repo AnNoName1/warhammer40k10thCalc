@@ -24,6 +24,12 @@
                 "summary": "Calculate Damage",
                 "parameters": [
                     {
+                        "type": "string",
+                        "description": "Request UUID",
+                        "name": "X-Request-ID",
+                        "in": "header"
+                    },
+                    {
                         "description": "Calculation Parameters",
                         "name": "request",
                         "in": "body",
@@ -87,6 +93,10 @@
                 "num_models": {
                     "type": "integer"
                 },
+                "request_uuid": {
+                    "description": "RequestUUID is populated by server middleware and is not required from clients.",
+                    "type": "string"
+                },
                 "s": {
                     "description": "Strength",
                     "type": "integer"
@@ -100,6 +110,10 @@
                 },
                 "t": {
                     "description": "Target Toughness",
+                    "type": "integer"
+                },
+                "target_wounds_per_model": {
+                    "description": "How many wounds each model has",
                     "type": "integer"
                 },
                 "torrent": {
@@ -145,6 +159,10 @@
                         "type": "number",
                         "format": "float64"
                     }
+                },
+                "request_uuid": {
+                    "description": "RequestUUID echoes the request UUID assigned by middleware.",
+                    "type": "string"
                 },
                 "wounds_distribution": {
                     "type": "object",

@@ -1,23 +1,3 @@
-# Copyright (c) 2025 Olbutov Aleksandr
-#
-# Permission is hereby granted, free of charge, to any person obtaining a copy
-# of this software and associated documentation files (the "Software"), to deal
-# in the Software without restriction, including without limitation the rights
-# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-# copies of the Software, and to permit persons to whom the Software is
-# furnished to do so, subject to the following conditions:
-#
-# The above copyright notice and this permission notice shall be included in
-# all copies or substantial portions of the Software.
-#
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-# SOFTWARE.
-
 basePath: /api
 definitions:
   damagerequest.DamageRequest:
@@ -51,6 +31,10 @@ definitions:
         type: boolean
       num_models:
         type: integer
+      request_uuid:
+        description: RequestUUID is populated by server middleware and is not required
+          from clients.
+        type: string
       s:
         description: Strength
         type: integer
@@ -61,6 +45,9 @@ definitions:
         type: integer
       t:
         description: Target Toughness
+        type: integer
+      target_wounds_per_model:
+        description: How many wounds each model has
         type: integer
       torrent:
         type: boolean
@@ -92,6 +79,9 @@ definitions:
           format: float64
           type: number
         type: object
+      request_uuid:
+        description: RequestUUID echoes the request UUID assigned by middleware.
+        type: string
       wounds_distribution:
         additionalProperties:
           format: float64
@@ -121,6 +111,10 @@ paths:
       - application/json
       description: Calculates statistical damage based on input parameters
       parameters:
+      - description: Request UUID
+        in: header
+        name: X-Request-ID
+        type: string
       - description: Calculation Parameters
         in: body
         name: request

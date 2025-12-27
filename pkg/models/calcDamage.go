@@ -30,8 +30,9 @@ type DamageRequest struct {
 	T             int    `json:"t"`              // Target Toughness
 	Save          int    `json:"save"`           // Target Save
 	// Pointers (*int) are used for optional fields. If the field is omitted in JSON, the pointer will be nil.
-	Invulnerable *int `json:"invulnerable,omitempty"` // Invulnerable Save, optional
-	FeelNoPain   *int `json:"feel_no_pain,omitempty"` // Feel No Pain, optional
+	Invulnerable   *int `json:"invulnerable,omitempty"`            // Invulnerable Save, optional
+	FeelNoPain     *int `json:"feel_no_pain,omitempty"`            // Feel No Pain, optional
+	WoundsPerModel int  `json:"target_wounds_per_model,omitempty"` // How many wounds each model has
 
 	HitReroll   RerollType `json:"hit_reroll"`
 	WoundReroll RerollType `json:"wound_reroll"`
