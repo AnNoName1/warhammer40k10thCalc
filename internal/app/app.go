@@ -50,8 +50,11 @@ func Run() error {
 	// This serves the documentation at /swagger/index.html
 	mux.Handle("/swagger/", httpSwagger.WrapHandler)
 
-	// Wrap the mux with logging middleware
-	handlerWithMiddleware := middleware.LoggingMiddleware(mux)
+	// Wrap the mux with middleware
+
+	handler := middleware.RecoverMiddleware(
+		middleware.LoggingMiddleware(mux),
+	)
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -61,5 +64,5 @@ func Run() error {
 	log.Printf("Server starting on http://localhost:%s\n", port)
 	log.Printf("Swagger UI available at http://localhost:%s/swagger/index.html\n", port)
 	// Start the server with middleware-wrapped handler
-	return http.ListenAndServe(":"+port, handlerWithMiddleware)
+	return http.ListenAndServe(":"+port, handler)
 }
