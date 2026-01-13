@@ -79,10 +79,10 @@ func CalculateDamageHandler(calculator DamageCalculator) http.HandlerFunc {
 			return
 		}
 
-	resp, err := calculator.CalculateDamageCore(req)
-	if err != nil {
-		log.Printf("[%s] Calculation error: %v", reqID, err)
-		// Use the helper for business logic errors
+		if err := dto.Validate(); err != nil {
+			SendError(w, reqID, err.Error(), http.StatusBadRequest)
+			return
+		}
 
 		domainReq, err := dto.ToDomain()
 		if err != nil {

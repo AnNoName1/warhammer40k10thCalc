@@ -78,6 +78,71 @@ type RulesDTO struct {
 	CriticalWoundThreshold int `json:"critical_wound_threshold,omitempty"`
 }
 
+// --- Validator ---
+func (req *DamageRequestDTO) Validate() error {
+	// 1. Basic Existence
+	if req.Attacker.NumModels <= 0 {
+		return errors.New("attacker.num_models must be positive")
+	}
+	if req.Attacker.S <= 0 || req.Target.T <= 0 {
+		return errors.New("strength and toughness must be positive")
+	}
+	if req.Target.WoundsPerModel <= 0 {
+		return errors.New("target.wounds_per_model must be positive")
+	}
+
+	// 2. Impossible-by-Rules (Game Logic)
+	// BS 1+ is impossible (rolls of 1 always fail). BS 6+ is the worst possible.
+	if !req.Attacker.Torrent && (req.Attacker.BS < 2 || req.Attacker.BS > 6) {
+		return errors.New("bs must be between 2 and 6 (unless Torrent)")
+	}
+
+	// Save 1+ is impossible.
+	if req.Target.Save < 2 {
+		return errors.New("save must be 2+ or higher")
+	}
+
+	// Invulnerable checks
+	if req.Target.Invulnerable != nil {
+		if *req.Target.Invulnerable < 2 || *req.Target.Invulnerable > 6 {
+			return errors.New("invulnerable save must be between 2+ and 6+")
+		}
+	}
+
+	// Feel No Pain checks
+	if req.Target.FeelNoPain != nil {
+		if *req.Target.FeelNoPain < 2 || *req.Target.FeelNoPain > 6 {
+			return errors.New("fnp must be between 2+ and 6+")
+		}
+	}
+
+	if req.Target.ModelCount != nil {
+		if *req.Target.ModelCount <= 0 {
+			return errors.New("target.model_count must be positive")
+		}
+	}
+
+	// Critical Thresholds
+	if req.Rules.CriticalHitThreshold != 0 && (req.Rules.CriticalHitThreshold < 2 || req.Rules.CriticalHitThreshold > 6) {
+		return errors.New("critical hit threshold must be between 2 and 6")
+	}
+	if req.Rules.CriticalWoundThreshold != 0 && (req.Rules.CriticalWoundThreshold < 2 || req.Rules.CriticalWoundThreshold > 6) {
+		return errors.New("critical wound threshold must be between 2 and 6")
+	}
+
+	// Blast Requirements
+	if req.Attacker.Blast {
+		if req.Target.ModelCount == nil {
+			return errors.New("target.model_count is required for Blast weapons")
+		}
+		if *req.Target.ModelCount <= 0 {
+			return errors.New("target.model_count must be positive for Blast weapons")
+		}
+	}
+
+	return nil
+}
+
 var diceRegex = regexp.MustCompile(`(?i)^(\d*)d(\d+)\s*([+-]\s*\d+)?$`)
 
 // ParseDiceString converts "2d6+1" or "4" into a clean DiceRoll struct
