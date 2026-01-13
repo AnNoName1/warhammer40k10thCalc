@@ -41,8 +41,8 @@ type DamageCalculatorImpl struct{}
 // Returns a vector where index i is the probability of exactly i successes.
 
 func (d *DamageCalculatorImpl) CalculateDamageCore(req CombatSimulationRequest) (SimulationResult, error) {
-	if err != nil {
-		return damagerequest.DamageResponse{}, err
+	if err := d.Sanitize(&req); err != nil {
+		return SimulationResult{}, err
 	}
 
 	// ── 1. Attack count distribution ───────────────────────────────
@@ -375,4 +375,76 @@ func formatResponse(hits, wounds, pens, killed map[int]float64) SimulationResult
 		PenDist:          pens,
 		DestroyedDist:    killed,
 	}
+}
+
+// Used solely for Sanity Checking and allocation limits.
+// GetMaxFromDice returns the maximum possible value a DiceRoll can produce.
+func GetMaxFromDice(d DiceRoll) int {
+	// If it's a fixed value, d.Count and d.Sides are 0, so it returns d.Modifier.
+	// If it's 2d6+3, it returns (2*6) + 3 = 15.
+	max := (d.Count * d.Sides) + d.Modifier
+
+	// We apply the same floor logic used in math to ensure our "worst case"
+	// matches the engine's behavior.
+	if max < 1 {
+		return 1
+	}
+	return max
+}
+
+func (d *DamageCalculatorImpl) Sanitize(req *CombatSimulationRequest) error {
+	// 1. Get the "Ceiling" of the attack sequence
+	maxAttacks := GetMaxFromDice(req.Attacker.Attacks) * req.Attacker.Count
+	maxDamage := GetMaxFromDice(req.Attacker.Damage)
+
+	devastatingDoSpillover := false
+
+	// 2. Resolve the Target Count (Business Logic for "Infinite")
+	var effectiveTargetCount int
+
+	if req.Target.Count == nil {
+		// "Infinite" logic: Determine how many models can actually be affected.
+		if req.Attacker.DevastatingWounds && devastatingDoSpillover {
+			// Spillover: Total pool of damage matters.
+			totalPossibleDamage := maxAttacks * maxDamage
+			effectiveTargetCount = (totalPossibleDamage / req.Target.WoundsPerModel) + 1
+		} else {
+			// No spillover: Cannot kill more models than there are attacks.
+			effectiveTargetCount = maxAttacks
+		}
+
+		// Safety cap to prevent DOS (Business constraint).
+		if effectiveTargetCount > 200 {
+			effectiveTargetCount = 200
+		}
+
+		// FIX: Assign the address of our calculated variable back to the request.
+		// Go's escape analysis will move effectiveTargetCount to the heap.
+		req.Target.Count = &effectiveTargetCount
+	} else {
+		effectiveTargetCount = *req.Target.Count
+	}
+
+	// 3. Blast Correction (Feedback Loop)
+	// If Blast is on, the target count actually INCREASES the number of attacks.
+	if req.Attacker.Blast {
+		// Blast adds 1 attack per 5 models (Warhammer 10th Ed Rule).
+		addedAttacks := (effectiveTargetCount / 5) * req.Attacker.Count
+		maxAttacks += addedAttacks
+	}
+
+	// 4. Calculate Final Complexity Score
+	// State Space = Width (Models * HP). MaxAttacks = Depth.
+	stateSpace := effectiveTargetCount * req.Target.WoundsPerModel
+	// If each attack requires iterating over the state space:
+	score := maxAttacks * (stateSpace * stateSpace) // Or a lower multiplier like * 10
+
+	// 5. The Threshold Check
+	const Threshold = 25_000_000
+	if score > Threshold {
+		return fmt.Errorf("simulation complexity %d exceeds limit %d. (Targeting ~%d models with ~%d max attacks)",
+			score, Threshold, effectiveTargetCount, maxAttacks)
+	}
+
+	return nil
 }
