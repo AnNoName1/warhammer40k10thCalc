@@ -1,0 +1,25 @@
+<type>(<scope>): <short imperative summary>
+
+WHY:
+- What problem does this change solve?
+- Why is it needed now?
+
+ATOMICITY:
+- Atomic: yes | no
+- If no, explain why an atomic split is not feasible.
+
+TRANSITIONAL CODE:
+- Transitional code introduced: yes | no
+- If yes:
+  - What is transitional?
+  - When / how will it be removed?
+
+TESTS:
+- Tests added in this commit:
+  - [ ] happy-path
+  - [ ] error cases
+  - [ ] invariants / properties
+
+POLICY EXCEPTION:
+- Required: no
+- If yes, explain which rule is broken and why.
