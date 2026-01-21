@@ -1,0 +1,26 @@
+repos:
+  - repo: local
+    hooks:
+      - id: go-fmt
+        name: gofmt
+        entry: gofmt -w
+        language: system
+        types: [go]
+
+      - id: go-vet
+        name: go vet
+        entry: go vet ./...
+        language: system
+        pass_filenames: false
+
+      - id: go-test
+        name: go test
+        entry: go test ./... -short
+        language: system
+        pass_filenames: false
+
+      - id: check-commit-message
+        name: Check Commit Message Format
+        entry: bash ./scripts/validate-commit-msg.sh
+        language: system
+        stages: [commit-msg]
