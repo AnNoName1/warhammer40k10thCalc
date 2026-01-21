@@ -20,7 +20,7 @@
 
 package calculator
 
-// _calculateFailedSaveProbability calculates the probability of a defender failing their saving throw
+// CalculateFailedSaveProbability calculates the probability of a defender failing their saving throw
 // against a single successful wound, incorporating 10th edition capping rules.
 //
 // The rule states that the final required save roll cannot be modified to be better than 2+
@@ -34,18 +34,41 @@ package calculator
 //
 // Returns:
 // float64: The probability of failing the save.
-func _calculateFailedSaveProbability(ap int, save int, invulnerable *int, saveModifier int) float64 {
-	// 1. Calculate the Modified Armor Save
-	// AP makes the save harder (adds to the target number).
-	// Modifiers (like cover) make the save easier (subtract from the target number).
-	armorSaveTarget := save + ap - saveModifier
 
-	// 2. Determine the "Best" Save Target
-	// Start with the armor save as the best option
+// _applyBenefitOfCover determines if the +1 to save applies.
+// "Models with a Save characteristic of 3+ or better cannot have the Benefit of Cover
+// against attacks with an Armour Penetration characteristic of 0."
+
+import "math"
+
+func _getBenefitOfCoverModifier(save int, ap int, hasCover bool) int {
+	if !hasCover {
+		return 0
+	}
+
+	// Rule: If Save is 3+ or better (3, 2) and AP is 0, no bonus.
+	if save <= 3 && ap == 0 {
+		return 0
+	}
+
+	return 1
+}
+
+func CalculateFailedSaveProbability(ap int, save int, invulnerable *int, saveModifier int,
+	hasCover bool, saveReroll RerollType) float64 {
+
+	const oneSixth = 1.0 / 6.0
+
+	// 1. Calculate the Benefit of Cover specifically
+	bocModifier := _getBenefitOfCoverModifier(save, ap, hasCover)
+
+	// 2. Calculate the Modified Armor Save
+	// Total modifier is the general saveModifier + the BoC bonus
+	totalModifier := saveModifier + bocModifier
+	armorSaveTarget := save + ap - totalModifier
+
+	// 3. Determine the "Best" Save Target
 	finalTarget := armorSaveTarget
-
-	// If an invulnerable save exists, check if it is better (lower) than the armor save.
-	// Note: Based on Test Case 8, Invulnerable saves are NOT affected by the saveModifier.
 	if invulnerable != nil {
 		invulnTarget := *invulnerable
 		if invulnTarget < finalTarget {
@@ -53,21 +76,27 @@ func _calculateFailedSaveProbability(ap int, save int, invulnerable *int, saveMo
 		}
 	}
 
-	// 3. Apply the "Rule of 1" and Logic Caps
-	// A roll of 1 always fails, so the effective target cannot be lower than 2.
+	// 4. Apply Caps (1 always fails, cannot pass if > 6)
 	if finalTarget < 2 {
 		finalTarget = 2
 	}
 
-	// 4. Calculate Fail Chance
-	// If the target is greater than 6, it is impossible to pass on a D6.
 	if finalTarget > 6 {
-		return 1.0
+		return 1.0 // 100% fail rate
 	}
 
-	// Probability of Passing = (Sides of Die - Target + 1) / Sides of Die
-	// Simplified: (7 - Target) / 6
+	// 5. Calculate Base Probabilities
 	passChance := (7.0 - float64(finalTarget)) / 6.0
+	failChance := 1.0 - passChance
 
-	return 1.0 - passChance
+	// 6. Handle Rerolls
+	if saveReroll == RerollOnes {
+		// If we roll a 1 (1/6), we retry and get another passChance
+		failChance -= oneSixth * passChance
+	} else if saveReroll == RerollFail {
+		// If we fail (failChance), we retry and get another passChance
+		failChance -= failChance * passChance
+	}
+
+	return math.Max(0.0, failChance)
 }

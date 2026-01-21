@@ -22,8 +22,6 @@ package calculator
 
 import (
 	"fmt"
-
-	damagerequest "github.com/AnNoName1/warhammer40k10thCalc/pkg/models"
 )
 
 // UnitState tracks the health of the defending unit during sequential damage allocation.
@@ -33,200 +31,332 @@ type UnitState struct {
 	CurrentHP int // Remaining HP of the specific model currently taking damage
 }
 
+type DamageCalculatorImpl struct{}
+
 // CalculateDamageCore is the main entry point for the probability engine.
 // It uses a "Transition Map" algorithm: instead of simulating dice rolls, it
 // calculates the mathematical probability of every possible branch in the
 // attack sequence (Hit -> Wound -> Save -> Damage).
-func CalculateDamageCore(req damagerequest.DamageRequest) (damagerequest.DamageResponse, error) {
-	// 1. SETUP: Convert raw request strings (like "2D6+2") into probability maps.
-	// -------------------------------------------------------------------------
-	attacksDist, err := CalculateAttackDistribution(req.AttacksString)
+// getBinomialVector calculates the binomial distribution for n trials with probability p.
+// Returns a vector where index i is the probability of exactly i successes.
+
+func (d *DamageCalculatorImpl) CalculateDamageCore(req CombatSimulationRequest) (SimulationResult, error) {
 	if err != nil {
 		return damagerequest.DamageResponse{}, err
 	}
 
-	// damageDist accounts for both the weapon damage and Feel No Pain (FNP) reduction.
-	damageDist := _calculateDamageDistribution(req.D, req.FeelNoPain)
+	// ── 1. Attack count distribution ───────────────────────────────
+	attackCountDist := CalculateAttackDistribution(
+		req.Attacker.Attacks, req.Attacker.Count, req.Attacker.Blast, *req.Target.Count,
+	)
 
-	// Pre-calculate fixed probabilities based on modifiers (Lethal Hits, Devastating Wounds, etc.)
-	hitP, lethalP := _calculateHitProbability(req.BS, req.HitReroll, req.HitModifier, req.LethalHits)
-	woundP, devP := _calculateWoundProbability(req.S, req.T, req.WoundReroll, req.WoundModifier, req.DevastatingWounds)
-	saveFailP := _calculateFailedSaveProbability(req.AP, req.Save, req.Invulnerable, req.SaveModifier)
+	// ── 2. Expected hits per single attack roll (split into normal and lethal) ──
+	expectedNormalHits, expectedLethalHits := CalculateHitExpected(
+		req.Attacker.BS,
+		req.Settings.HitReroll,
+		req.Settings.HitModifier,
+		req.Attacker.LethalHits,
+		req.Attacker.SustainedHits,
+		req.Settings.CriticalHitThreshold,
+	)
+	expectedTotalHits := expectedNormalHits + expectedLethalHits
 
-	// Accumulators for the final statistical distributions.
-	hitsDist := make(map[int]float64)
-	woundsDist := make(map[int]float64)
-	pensDist := make(map[int]float64)
-	killedDist := make(map[int]float64)
+	// ── 3. Wound probabilities (per single wound roll / hit) ───────
+	probNormalWound, probDevastatingWound := CalculateWoundProbability(
+		req.Attacker.Strength,
+		req.Target.Toughness,
+		req.Settings.WoundReroll,
+		req.Settings.WoundModifier,
+		req.Attacker.DevastatingWounds,
+		req.Settings.CriticalWoundThreshold,
+	)
 
-	// 2. THE PIPELINE: Nested loops representing the sequence of play.
-	// Each loop handles one stage of the Warhammer 40k attack resolution.
-	// -------------------------------------------------------------------------
-	for numAttacks, pAtk := range attacksDist {
+	// ── 4. Save failure probability (after AP, invuln, cover, etc) ─
+	// This is only for armor/invuln saves; FNP is applied later in damage distribution
+	probSaveFailed := CalculateFailedSaveProbability(
+		req.Attacker.AP,
+		req.Target.Save,
+		req.Target.Invulnerable,
+		req.Settings.SaveModifier,
+		req.Target.HasCover,
+		req.Settings.SaveReroll,
+	)
 
-		// STAGE A: HIT ROLLS
-		// Generates probabilities for (Normal Hits, Lethal Hits)
-		hitOutcomes := getHitOutcomes(numAttacks, hitP, lethalP)
-		for ho, pHO := range hitOutcomes {
-			hitsDist[ho.normal+ho.lethal] += pAtk * pHO
+	// ── 5. Compute max possible attacks for sizing ──────────────────
+	maxAttacks := 0
+	for n := range attackCountDist {
+		if n > maxAttacks {
+			maxAttacks = n
+		}
+	}
+	max := maxAttacks // shorthand
 
-			// STAGE B: WOUND ROLLS
-			// Normal hits roll to wound; Lethal hits skip this and become automatic wounds.
-			woundOutcomes := getWoundOutcomes(ho.normal, ho.lethal, woundP, devP)
-			for wo, pWO := range woundOutcomes {
-				woundsDist[wo.normal+wo.devastating] += pAtk * pHO * pWO
+	// ── 6. Joint distribution: normal wounds before save × devastating wounds ──
+	// Using binomial approximation with correlation via conditional
+	jointNormalBeforeSave_Dev := make([][]float64, max+1)
+	for i := range jointNormalBeforeSave_Dev {
+		jointNormalBeforeSave_Dev[i] = make([]float64, max+1)
+	}
 
-				// STAGE C: SAVE ROLLS
-				// Devastating wounds skip saves; Normal wounds check against the Save/AP.
-				unsavedOutcomes := getUnsavedOutcomes(wo.normal, wo.devastating, saveFailP)
-				for uo, pUO := range unsavedOutcomes {
-					pensDist[uo.normal+uo.mortal] += pAtk * pHO * pWO * pUO
+	// ── 7. Hits distribution (total, for reporting) ────────────────
+	finalHitsDist := make([]float64, max+1)
 
-					// STAGE D: DAMAGE RESOLUTION (The Markov Chain)
-					// Applies unsaved damage sequentially to models, handling "Wasted" vs "Spillover" damage.
-					killedMap := resolveDamageSequential(uo.normal, uo.mortal, damageDist, req.WoundsPerModel, req.NumModels)
+	for attacks, attackProb := range attackCountDist {
+		if attackProb < 1e-15 {
+			continue
+		}
 
-					// Calculate the total probability weight for this specific branch of the tree.
-					weight := pAtk * pHO * pWO * pUO
-					for numKilled, pKilled := range killedMap {
-						killedDist[numKilled] += weight * pKilled
-					}
+		// Hits (using total expected)
+		hitDist := getBinomialVector(attacks, expectedTotalHits)
+		for h, p := range hitDist {
+			finalHitsDist[h] += p * attackProb
+		}
+
+		// ── Joint normal-before-save & devastating ──────────────────
+		// First, expected normal wounds before save from normal hits + lethal (lethal become normal wounds)
+		pNormalWoundBeforeSave := (expectedNormalHits * probNormalWound) + expectedLethalHits
+		pDevWound := expectedNormalHits * probDevastatingWound // lethal usually not devastating
+
+		pTotalSuccess := pNormalWoundBeforeSave + pDevWound
+		pNeither := 1.0 - pTotalSuccess/float64(attacks) // approximate normalization
+
+		if pTotalSuccess > float64(attacks) || pNeither < 0 {
+			// Invalid - cap or log error
+			pTotalSuccess = float64(attacks)
+			pNeither = 0
+		}
+
+		// Binomial for normal before save
+		normalDist := getBinomialVector(attacks, pNormalWoundBeforeSave/float64(attacks))
+		for normal, pNormal := range normalDist {
+			if pNormal < 1e-15 {
+				continue
+			}
+
+			remaining := attacks - normal // approximate remaining trials
+			pDevCond := 0.0
+			if remaining > 0 && pNeither+pDevWound > 0 {
+				pDevCond = pDevWound / (pNeither + pDevWound)
+			}
+
+			devDist := getBinomialVector(remaining, pDevCond)
+			for dev, pDev := range devDist {
+				if pDev < 1e-15 {
+					continue
+				}
+				jointNormalBeforeSave_Dev[normal][dev] += attackProb * pNormal * pDev
+			}
+		}
+	}
+
+	// ── 8. Total wounds dist (for reporting, sum nw + dw) ──────────
+	totalWoundsDist := make([]float64, max+1)
+	for nw := 0; nw <= max; nw++ {
+		for dw := 0; dw <= max-nw; dw++ {
+			p := jointNormalBeforeSave_Dev[nw][dw]
+			if p > 1e-15 {
+				totalWoundsDist[nw+dw] += p
+			}
+		}
+	}
+
+	// ── 9. Marginal devastating dist ───────────────────────────────
+	devastatingDist := make([]float64, max+1)
+	for dw := 0; dw <= max; dw++ {
+		colSum := 0.0
+		for nw := 0; nw <= max; nw++ {
+			colSum += jointNormalBeforeSave_Dev[nw][dw]
+		}
+		devastatingDist[dw] = colSum
+	}
+
+	// ── 10. Final unsaved dist (unsaved normal + devastating) ──────
+	// Compute by looping over joint
+	finalUnsavedDist := make([]float64, max+1)
+	for nw := 0; nw <= max; nw++ {
+		for dw := 0; dw <= max; dw++ {
+			pJoint := jointNormalBeforeSave_Dev[nw][dw]
+			if pJoint < 1e-15 {
+				continue
+			}
+			unsavedNormal := getBinomialVector(nw, probSaveFailed)
+			for u, pU := range unsavedNormal {
+				if pU < 1e-15 {
+					continue
+				}
+				totalUnsaved := u + dw
+				finalUnsavedDist[totalUnsaved] += pJoint * pU
+			}
+		}
+	}
+
+	// ── 11. Damage allocation ──────────────────────────────────────
+	finalDestroyedDist := make(map[int]float64)
+	dmgWithFnp := _calculateDamageDistribution(req.Attacker.Damage, req.Target.FeelNoPain) // FNP applied here
+	dmgNoFnp := _calculateDamageDistribution(req.Attacker.Damage, req.Target.FeelNoPain)   // FNP for devastating - latest rules
+
+	for nw := 0; nw <= max; nw++ {
+		for dw := 0; dw <= max; dw++ {
+			pJoint := jointNormalBeforeSave_Dev[nw][dw]
+			if pJoint < 1e-12 {
+				continue
+			}
+			unsavedNormalDist := getBinomialVector(nw, probSaveFailed)
+			for u, pU := range unsavedNormalDist {
+				if pU < 1e-12 {
+					continue
+				}
+				weight := pJoint * pU
+				killedMap := resolveDamageSequentialSplit(
+					u, dw,
+					dmgWithFnp,
+					dmgNoFnp,
+					req.Target.WoundsPerModel,
+					*req.Target.Count,
+				)
+				for k, pk := range killedMap {
+					finalDestroyedDist[k] += weight * pk
 				}
 			}
 		}
 	}
 
-	return formatResponse(hitsDist, woundsDist, pensDist, killedDist), nil
+	return formatResponse(
+		vectorToMap(finalHitsDist),
+		vectorToMap(totalWoundsDist),
+		vectorToMap(finalUnsavedDist),
+		finalDestroyedDist,
+	), nil
 }
 
 // --- HELPER FUNCTIONS ---
-type hitResult struct{ normal, lethal int }
+func getBinomialVector(n int, p float64) []float64 {
+	dist := make([]float64, n+1)
+	dist[0] = 1.0
+	if p <= 0 {
+		return dist
+	}
+	if p >= 1.0 {
+		dist[0] = 0
+		dist[n] = 1.0
+		return dist
+	}
 
-// getHitOutcomes calculates the binomial distribution for hits.
-// It tracks 'Lethal Hits' (6s) separately from 'Normal Hits' because they interact differently with wounds.
-func getHitOutcomes(n int, pHit, pLethal float64) map[hitResult]float64 {
-	res := map[hitResult]float64{{0, 0}: 1.0}
-	for i := 0; i < n; i++ {
-		next := make(map[hitResult]float64)
-		for st, p := range res {
-			next[st] += p * (1.0 - (pHit + pLethal))                 // Outcome: Miss
-			next[hitResult{st.normal + 1, st.lethal}] += p * pHit    // Outcome: Normal Hit
-			next[hitResult{st.normal, st.lethal + 1}] += p * pLethal // Outcome: Lethal Hit
+	q := 1.0 - p
+	for i := 1; i <= n; i++ {
+		// Update in place from right to left to maintain O(n) space
+		for j := i; j > 0; j-- {
+			dist[j] = dist[j]*q + dist[j-1]*p
 		}
-		res = next
+		dist[0] *= q
+	}
+	return dist
+}
+
+// convolve performs a discrete convolution of two probability distributions.
+func convolve(a, b []float64) []float64 {
+	if len(a) == 0 {
+		return b
+	}
+	if len(b) == 0 {
+		return a
+	}
+	res := make([]float64, len(a)+len(b)-1)
+	for i, va := range a {
+		if va < 1e-18 {
+			continue
+		}
+		for j, vb := range b {
+			res[i+j] += va * vb
+		}
 	}
 	return res
 }
 
-type woundResult struct{ normal, devastating int }
-
-// getWoundOutcomes processes normal hits through a wound roll.
-// It integrates Lethal Hits as guaranteed "normal" wounds.
-func getWoundOutcomes(nHit, lHit int, pWound, pDev float64) map[woundResult]float64 {
-	res := map[woundResult]float64{{lHit, 0}: 1.0}
-	for i := 0; i < nHit; i++ {
-		next := make(map[woundResult]float64)
-		for st, p := range res {
-			next[st] += p * (1.0 - (pWound + pDev))                        // Outcome: Fail to wound
-			next[woundResult{st.normal + 1, st.devastating}] += p * pWound // Outcome: Normal Wound
-			next[woundResult{st.normal, st.devastating + 1}] += p * pDev   // Outcome: Devastating Wound
+// vectorToMap translates the internal vector back to the map used in the output contract.
+func vectorToMap(vec []float64) map[int]float64 {
+	res := make(map[int]float64)
+	for i, p := range vec {
+		if p > 1e-15 {
+			res[i] = p
 		}
-		res = next
 	}
 	return res
 }
 
-type unsavedResult struct{ normal, mortal int }
+// In resolveDamageSequentialSplit: ensure NO spill for BOTH (your original applyWoundsLinear with spills=false for both)
+func resolveDamageSequentialSplit(
+	nNorm, nMortal int,
+	normDmgDist, mortalDmgDist map[int]float64,
+	maxHP, totalModels int,
+) map[int]float64 {
+	maxPossible := totalModels * maxHP
+	states := make([]float64, maxPossible+1)
+	states[maxPossible] = 1.0
 
-// getUnsavedOutcomes determines how many wounds get past the Armor/Invulnerable save.
-// It labels Devastating Wounds as "mortal" because they ignore saves entirely in 10th Ed.
-func getUnsavedOutcomes(nWnd, dWnd int, pFail float64) map[unsavedResult]float64 {
-	res := map[unsavedResult]float64{{0, 0}: 1.0}
-	for i := 0; i < nWnd; i++ {
-		next := make(map[unsavedResult]float64)
-		for st, p := range res {
-			next[st] += p * (1.0 - pFail)                              // Outcome: Save passed
-			next[unsavedResult{st.normal + 1, st.mortal}] += p * pFail // Outcome: Save failed
-		}
-		res = next
-	}
-	for i := 0; i < dWnd; i++ {
-		next := make(map[unsavedResult]float64)
-		for st, p := range res {
-			next[unsavedResult{st.normal, st.mortal + 1}] += p // Outcome: Guaranteed unsaved
-		}
-		res = next
-	}
-	return res
-}
-
-// resolveDamageSequential manages the transition from "Unsaved Wound" to "Model Removed".
-// It processes Normal Wounds first (damage wasted if it exceeds remaining HP),
-// then processes Mortal Wounds (damage spills over to the next model).
-func resolveDamageSequential(nNorm, nMortal int, dmgDist map[int]float64, maxHP, totalModels int) map[int]float64 {
-	states := map[UnitState]float64{{Killed: 0, CurrentHP: maxHP}: 1.0}
-
-	// Normal wounds do not spill over.
+	// Apply normal unsaved (FNP already accounted in dist, no spill)
 	for i := 0; i < nNorm; i++ {
-		states = applyWounds(states, dmgDist, maxHP, totalModels, false)
+		states = applyWoundsLinear(states, normDmgDist, maxHP, false) // no spill
 	}
-	// Mortal wounds (Devastating) do spill over.
+	// Apply devastating (ignore FNP, no spill)
 	for i := 0; i < nMortal; i++ {
-		states = applyWounds(states, dmgDist, maxHP, totalModels, true)
+		states = applyWoundsLinear(states, mortalDmgDist, maxHP, false) // IMPORTANT: false = no spill
 	}
 
-	// Collapse the detailed UnitState (Killed+HP) back into a simple 'Models Killed' map.
 	final := make(map[int]float64)
-	for st, p := range states {
-		final[st.Killed] += p
+	for remaining, prob := range states {
+		if prob < 1e-12 {
+			continue
+		}
+		modelsLeft := (remaining + maxHP - 1) / maxHP
+		killed := totalModels - modelsLeft
+		final[killed] += prob
 	}
 	return final
 }
 
 // applyWounds is the core state-transition engine.
 // It iterates through every possible HP state and applies a single attack's damage distribution.
-func applyWounds(states map[UnitState]float64, dmgDist map[int]float64, maxHP, totalModels int, spills bool) map[UnitState]float64 {
-	next := make(map[UnitState]float64)
-	for st, p := range states {
-		// Stop calculating if the whole unit is already dead.
-		if st.Killed >= totalModels {
-			next[st] += p
+func applyWoundsLinear(states []float64, dmgDist map[int]float64, maxHP int, spills bool) []float64 {
+	next := make([]float64, len(states))
+
+	for currentWounds, stateProb := range states {
+		if stateProb <= 0 {
 			continue
 		}
-		for dVal, dP := range dmgDist {
-			prob := p * dP
-			hp, killed := st.CurrentHP, st.Killed
+		if currentWounds == 0 { // Unit already dead
+			next[0] += stateProb
+			continue
+		}
 
+		for dVal, dProb := range dmgDist {
+			p := stateProb * dProb
+
+			var newWounds int
 			if spills {
-				// MORTAL WOUND LOGIC: Damage carries over.
-				rem := dVal
-				for rem > 0 && killed < totalModels {
-					if rem >= hp {
-						rem -= hp
-						killed++
-						hp = maxHP
-					} else {
-						hp -= rem
-						rem = 0
-					}
+				// Mortal Wounds: Simple subtraction, floor at 0
+				newWounds = currentWounds - dVal
+				if newWounds < 0 {
+					newWounds = 0
 				}
 			} else {
-				// NORMAL DAMAGE LOGIC: Excess damage is lost.
-				if dVal >= hp {
-					killed++
-					hp = maxHP
-				} else {
-					hp -= dVal
+				// Normal Damage: Cannot lose more than the current model's remaining HP
+				// Current model HP is: ((currentWounds-1) % maxHP) + 1
+				currentModelHP := ((currentWounds - 1) % maxHP) + 1
+				damageDealt := dVal
+				if damageDealt > currentModelHP {
+					damageDealt = currentModelHP
 				}
+				newWounds = currentWounds - damageDealt
 			}
-			next[UnitState{killed, hp}] += prob
+			next[newWounds] += p
 		}
 	}
 	return next
 }
 
 // formatResponse calculates final averages and builds the structured response for the client.
-func formatResponse(hits, wounds, pens, killed map[int]float64) damagerequest.DamageResponse {
+func formatResponse(hits, wounds, pens, killed map[int]float64) SimulationResult {
 	avgK := 0.0
 	for k, v := range killed {
 		avgK += float64(k) * v
@@ -236,13 +366,13 @@ func formatResponse(hits, wounds, pens, killed map[int]float64) damagerequest.Da
 		avgH += float64(k) * v
 	}
 
-	return damagerequest.DamageResponse{
-		AverageHits:           avgH,
-		AverageDestroyed:      avgK,
-		HitsDistribution:      hits,
-		WoundsDistribution:    wounds,
-		PensDistribution:      pens,
-		DestroyedDistribution: killed,
-		Message:               fmt.Sprintf("Calculated probability for %d potential unit health states.", len(killed)),
+	return SimulationResult{
+		//mapping here
+		AverageHits:      avgH,
+		AverageDestroyed: avgK,
+		HitDist:          hits,
+		WoundDist:        wounds,
+		PenDist:          pens,
+		DestroyedDist:    killed,
 	}
 }

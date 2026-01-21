@@ -20,87 +20,103 @@
 
 package calculator
 
-import (
-	"fmt"
-	"regexp"
-	"strconv"
-	"strings"
-)
+func CalculateAttackDistribution(
+	attacks DiceRoll,
+	attackerCount int,
+	blast bool,
+	targetCount int,
+) map[int]float64 {
 
-// compiled regex for performance.
-// We use ^ and $ to ensure we match the full string (e.g., prevent "10 models" matching as "1").
-var diceRegex = regexp.MustCompile(`(?i)^(\d*)d(\d+)\s*\+?\s*(\d*)$`)
+	// 1. Parse attack string into a PER-MODEL distribution
+	perModelDist := getDiceDistribution(attacks)
 
-// CalculateAttackDistribution parses a string like "2d6+1" or "4"
-// and returns a probability map [attacks]probability.
-func CalculateAttackDistribution(attackStr string) (map[int]float64, error) {
-	attackStr = strings.TrimSpace(attackStr)
-
-	// 1. Try to parse as a simple fixed number (e.g., "4")
-	if val, err := strconv.Atoi(attackStr); err == nil {
-		return map[int]float64{val: 1.0}, nil
+	// 2. Apply Blast (still PER-MODEL)
+	if blast {
+		perModelDist = applyBlastModifier(perModelDist, targetCount)
 	}
 
-	// 2. Try to parse as Dice format (e.g., "2d6+1", "d6", "D3")
-	matches := diceRegex.FindStringSubmatch(attackStr)
-	if matches == nil {
-		// If it's neither an Int nor a Dice string, return an error.
-		// Note: The Python code printed a warning and returned 0.
-		// In Go, returning an error is safer so the Handler can tell the user.
-		return nil, fmt.Errorf("invalid attack format: '%s'", attackStr)
+	// 3. Scale per-model distribution by attacker count
+	unitDist := scaleByAttackerCount(perModelDist, attackerCount)
+
+	return unitDist
+}
+
+func applyDamageFloor(value int) int {
+	if value < 1 {
+		return 1
+	}
+	return value
+}
+
+func getDiceDistribution(attacks DiceRoll) map[int]float64 {
+
+	// Roll dice
+	dist := rollDiceDistribution(attacks.Count, attacks.Sides)
+	// Apply flat modifier AND damage floor (Damage cannot be < 1)
+	finalDist := make(map[int]float64)
+	for val, p := range dist {
+		floored := applyDamageFloor(val + attacks.Modifier)
+		finalDist[floored] += p
 	}
 
-	// Parse Groups from Regex
-	// Group 1: Number of dice (optional, default 1)
-	numDice := 1
-	if matches[1] != "" {
-		var err error
-		numDice, err = strconv.Atoi(matches[1])
-		if err != nil {
-			return nil, fmt.Errorf("invalid dice count: %w", err)
-		}
-	}
+	return finalDist
+}
 
-	// Group 2: Die Type (required)
-	dieType, err := strconv.Atoi(matches[2])
-	if err != nil {
-		return nil, fmt.Errorf("invalid die type: %w", err)
-	}
+func rollDiceDistribution(numDice, dieType int) map[int]float64 {
+	current := map[int]float64{0: 1.0}
+	probPerFace := 1.0 / float64(dieType)
 
-	// Group 3: Modifier (optional, default 0)
-	modifier := 0
-	if matches[3] != "" {
-		var err error
-		modifier, err = strconv.Atoi(matches[3])
-		if err != nil {
-			return nil, fmt.Errorf("invalid modifier: %w", err)
-		}
-	}
-
-	// 3. Calculate Distribution (Convolution Logic)
-	// Start with a distribution of 0 attacks with probability 1.0
-	currentDist := map[int]float64{0: 1.0}
-
-	// For each die being rolled...
 	for i := 0; i < numDice; i++ {
-		newDist := make(map[int]float64)
-		probPerFace := 1.0 / float64(dieType)
-
-		// For every existing possible sum...
-		for currentSum, currentProb := range currentDist {
-			// Add the result of the new die roll (1 to dieType)
+		next := make(map[int]float64)
+		for sum, p := range current {
 			for roll := 1; roll <= dieType; roll++ {
-				newDist[currentSum+roll] += currentProb * probPerFace
+				next[sum+roll] += p * probPerFace
 			}
 		}
-		currentDist = newDist
+		current = next
 	}
 
-	// 4. Apply the modifier (e.g., +1)
-	finalDist := make(map[int]float64)
-	for sumVal, prob := range currentDist {
-		finalDist[sumVal+modifier] = prob
+	return current
+}
+
+func applyBlastModifier(
+	perModelDist map[int]float64,
+	targetCount int,
+) map[int]float64 {
+
+	// Rule: +1 attack per 5 target models
+	if targetCount < 5 {
+		return perModelDist
 	}
 
-	return finalDist, nil
+	blastBonus := targetCount / 5
+	out := make(map[int]float64)
+
+	for val, p := range perModelDist {
+		out[val+blastBonus] += p
+	}
+
+	return out
+}
+
+func scaleByAttackerCount(
+	perModelDist map[int]float64,
+	count int,
+) map[int]float64 {
+
+	// Start with zero total attacks
+	unitDist := map[int]float64{0: 1.0}
+
+	// Convolve the per-model distribution `count` times
+	for i := 0; i < count; i++ {
+		next := make(map[int]float64)
+		for total, pTotal := range unitDist {
+			for perModel, pModel := range perModelDist {
+				next[total+perModel] += pTotal * pModel
+			}
+		}
+		unitDist = next
+	}
+
+	return unitDist
 }

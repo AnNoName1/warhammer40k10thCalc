@@ -30,6 +30,7 @@ import (
 
 	_ "github.com/AnNoName1/warhammer40k10thCalc/docs"
 
+	calculator "github.com/AnNoName1/warhammer40k10thCalc/internal/calculator"
 	"github.com/AnNoName1/warhammer40k10thCalc/internal/middleware"
 	handler "github.com/AnNoName1/warhammer40k10thCalc/pkg/handler"
 )
@@ -45,7 +46,10 @@ func Run() error {
 	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
 	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
 	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
-	mux.HandleFunc("/api/damage/calculate", handler.CalculateDamageHandler)
+
+	calcCore := &calculator.DamageCalculatorImpl{}
+
+	mux.HandleFunc("/api/damage/calculate", handler.CalculateDamageHandler(calcCore))
 
 	// This serves the documentation at /swagger/index.html
 	mux.Handle("/swagger/", httpSwagger.WrapHandler)

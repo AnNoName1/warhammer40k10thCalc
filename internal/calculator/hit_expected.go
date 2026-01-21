@@ -22,60 +22,53 @@ package calculator
 
 import (
 	"math"
-
-	damagerequest "github.com/AnNoName1/warhammer40k10thCalc/pkg/models"
 )
 
 // _calculateHitProbability calculates the hit probability for a single attack.
 // Returns (normal_hit_probability, lethal_hit_probability).
-func _calculateHitProbability(bs int, rerollType damagerequest.RerollType, hitModifier int, lethalHits bool) (float64, float64) {
+func CalculateHitExpected(bs int, rerollType RerollType, hitModifier int,
+	lethalHits bool, sustainedHits int, criticalThreshold int) (float64, float64) {
 	const oneSixth = 1.0 / 6.0
-	const fiveSixths = 5.0 / 6.0
+
+	// Default threshold to 6 if not provided or set to 0
+	if criticalThreshold <= 0 {
+		criticalThreshold = 6
+	}
 
 	bsFloat := float64(bs)
 	hitModifierFloat := float64(hitModifier)
 
 	// 1. Base Hit Chance
-	// Formula: (7 - BS + Modifier) / 6
 	targetRollChance := (7.0 - bsFloat + hitModifierFloat) / 6.0
-
-	// Clamp: the chance cannot be less than 1/6 (natural 1 is always a miss)
-	// and no more than 5/6 (natural 6 is always a hit, unless modified, but 1 is always a miss).
-	// In Go, math.Max/Min work with float64.
-	hitChance := math.Max(oneSixth, math.Min(targetRollChance, fiveSixths))
-
-	// Store the miss chance BEFORE modifying hitChance with rerolls
+	hitChance := math.Max(oneSixth, math.Min(targetRollChance, 5.0/6.0))
 	missChance := 1.0 - hitChance
 
-	// 2. Rerolls
-	if rerollType == damagerequest.RerollOnes {
-		// Reroll ones (1/6)
+	// 2. Critical Hit Chance (The trigger for Lethal/Sustained)
+	// Formula: (7 - threshold) / 6. Example: 6+ is 1/6, 5+ is 2/6
+	critChance := float64(7-criticalThreshold) / 6.0
+
+	// Apply Rerolls to both standard hits and critical hits
+	if rerollType == RerollOnes {
 		hitChance += oneSixth * hitChance
-	} else if rerollType == damagerequest.RerollFail {
-		// Reroll all misses
+		critChance += oneSixth * critChance
+	} else if rerollType == RerollFail {
 		hitChance += missChance * hitChance
+		critChance += missChance * critChance
 	}
 
-	// 3. Lethal Hits
+	// 3. Handle Sustained Hits (Additional Normal Hits)
+	// These are added to hitChance regardless of Lethal Hits.
+	if sustainedHits > 0 {
+		hitChance += critChance * float64(sustainedHits)
+	}
+
+	// 4. Handle Lethal Hits (Converted from Normal Hits to Lethal)
 	lethalHitChance := 0.0
 	if lethalHits {
-		// Base 6
-		lethalHitChance = oneSixth
+		lethalHitChance = critChance
 
-		if rerollType == damagerequest.RerollOnes {
-			// Additional chance from rerolling ones: (1/6 chance to roll 1) * (1/6 chance to roll 6)
-			lethalHitChance += oneSixth * oneSixth
-		} else if rerollType == damagerequest.RerollFail {
-			// Additional chance from rerolling misses.
-			// Logic: We take the ORIGINAL miss chance (missChance) and multiply by the chance to roll a 6 (1/6).
-			// Note: The Python code used (1 - hitChance) * 1/6 inside the block,
-			// but hitChance was already modified. Mathematically, using missChance is more correct.
-			lethalHitChance += missChance * oneSixth
-		}
-
-		// Lethal hits are subtracted from normal hits, as they automatically wound
+		// Subtract the crits from the hit pool because they moved to the lethal pool
 		hitChance -= lethalHitChance
-		// Guard against negative values
 		hitChance = math.Max(0.0, hitChance)
 	}
 

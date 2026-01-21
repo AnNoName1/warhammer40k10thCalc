@@ -1,143 +1,253 @@
-// Copyright (c) 2025 Olbutov Aleksandr
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in
-// all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
-
 package calculator
 
 import (
 	"math"
 	"testing"
-
-	damagerequest "github.com/AnNoName1/warhammer40k10thCalc/pkg/models"
 )
 
 const epsilonCore = 0.00001
 
-func TestCalculateDamageCore_Distributions(t *testing.T) {
+func TestCalculateDamageCore_Basic(t *testing.T) {
 	tests := []struct {
 		name                 string
-		req                  damagerequest.DamageRequest
+		req                  CombatSimulationRequest
 		expectedAvgHits      float64
 		expectedAvgDestroyed float64
-		// Maps for you to fill with exact probability distributions
-		expectedHitsDist   map[int]float64
-		expectedWoundsDist map[int]float64
-		expectedPensDist   map[int]float64
-		expectedKilledDist map[int]float64
-		expectError        bool
+		expectedHitsDist     map[int]float64
+		expectedKilledDist   map[int]float64
 	}{
 		{
-			name: "Verification Case: 2 Attacks, BS3+, D1 vs 1W",
-			req: damagerequest.DamageRequest{
-				NumModels: 1, WoundsPerModel: 1, AttacksString: "1",
-				BS: 4, S: 5, T: 3, AP: 0, Save: 6, D: "1",
-				HitReroll: damagerequest.RerollNone, WoundReroll: damagerequest.RerollNone,
+			name: "1 Attack, BS4+, S5 vs T3, Save 6+",
+			req: CombatSimulationRequest{
+				Attacker: AttackerProfile{
+					Count:    1,
+					Attacks:  DiceRoll{Modifier: 1},
+					BS:       4,
+					Strength: 5,
+					AP:       0,
+					Damage:   DiceRoll{Modifier: 1},
+				},
+				Target: TargetProfile{
+					Count:          intPtr(1),
+					Toughness:      3,
+					Save:           6,
+					WoundsPerModel: 1,
+				},
 			},
-			expectedAvgHits:      0.5,
-			expectedAvgDestroyed: 0.28,
+			expectedAvgHits:      1.0 / 2.0,
+			expectedAvgDestroyed: 5.0 / 18.0,
 			expectedHitsDist: map[int]float64{
-				0: 0.5,
-				1: 0.5,
-				2: 0.0,
-			},
-			expectedWoundsDist: map[int]float64{
-				0: 0,
-				1: 0,
-			},
-			expectedPensDist: map[int]float64{
-				0: 0,
-				1: 0,
+				0: 1.0 / 2.0,
+				1: 1.0 / 2.0,
 			},
 			expectedKilledDist: map[int]float64{
-				0: 0.72,
-				1: 0.28,
-			},
-		},
-		{
-			name: "Mortal Wound Spillover Case",
-			req: damagerequest.DamageRequest{
-				NumModels: 3, WoundsPerModel: 2, AttacksString: "1",
-				BS: 1, S: 4, T: 4, AP: 0, Save: 7, D: "3",
-				DevastatingWounds: true,
-				HitReroll:         damagerequest.RerollNone, WoundReroll: damagerequest.RerollNone,
-			},
-			// 1 Attack, Auto Hit, Auto Wound, 3 Mortals vs 2W models = 1.5 kills average
-			expectedAvgHits:      1.0,
-			expectedAvgDestroyed: 1.5,
-			expectedKilledDist: map[int]float64{
-				1: 0.5, // 50% chance to kill 1 (if D3 rolls 1 or 2) -> Wait, D is string "3"
-				2: 0.5, // If D is fixed 3, it should kill 1 and wound 1.
+				0: 13.0 / 18.0,
+				1: 5.0 / 18.0,
 			},
 		},
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			resp, err := CalculateDamageCore(tc.req)
-			if tc.expectError {
-				if err == nil {
-					t.Fatal("expected error but got nil")
-				}
-				return
-			}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			calc := &DamageCalculatorImpl{}
+			resp, err := calc.CalculateDamageCore(tt.req)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
 
-			// 1. Verify Averages
-			verifyValue(t, "AverageHits", resp.AverageHits, tc.expectedAvgHits)
-			verifyValue(t, "AverageDestroyed", resp.AverageDestroyed, tc.expectedAvgDestroyed)
+			verifyValue(t, "AverageHits", resp.AverageHits, tt.expectedAvgHits)
+			verifyValue(t, "AverageDestroyed", resp.AverageDestroyed, tt.expectedAvgDestroyed)
 
-			// 2. Verify Distributions (if provided in test case)
-			if len(tc.expectedHitsDist) > 0 {
-				verifyDist(t, "HitsDistribution", resp.HitsDistribution, tc.expectedHitsDist)
-			}
-			if len(tc.expectedWoundsDist) > 0 {
-				verifyDist(t, "WoundsDistribution", resp.WoundsDistribution, tc.expectedWoundsDist)
-			}
-			if len(tc.expectedPensDist) > 0 {
-				verifyDist(t, "PensDistribution", resp.PensDistribution, tc.expectedPensDist)
-			}
-			if len(tc.expectedKilledDist) > 0 {
-				verifyDist(t, "DestroyedDistribution", resp.DestroyedDistribution, tc.expectedKilledDist)
-			}
+			verifyDist(t, "HitDist", resp.HitDist, tt.expectedHitsDist)
+			verifyDist(t, "DestroyedDist", resp.DestroyedDist, tt.expectedKilledDist)
 		})
 	}
 }
 
-// Helper: Checks float equality within epsilon
-func verifyValue(t *testing.T, label string, got, want float64) {
-	if math.Abs(got-want) > epsilonCore {
-		t.Errorf("%s: expected %.6f got %.6f", label, want, got)
+func TestCalculateDamageCore_LethalHits(t *testing.T) {
+	tests := []struct {
+		name                 string
+		req                  CombatSimulationRequest
+		expectedAvgDestroyed float64
+	}{
+		{
+			name: "BS4+, S3 vs T6 with Lethal Hits",
+			req: CombatSimulationRequest{
+				Attacker: AttackerProfile{
+					Count:      1,
+					Attacks:    DiceRoll{Modifier: 1},
+					BS:         4,
+					Strength:   3,
+					LethalHits: true,
+					Damage:     DiceRoll{Modifier: 1},
+				},
+				Target: TargetProfile{
+					Count:          intPtr(1),
+					Toughness:      6,
+					Save:           7,
+					WoundsPerModel: 1,
+				},
+			},
+			expectedAvgDestroyed: 8.0 / 36.0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			calc := &DamageCalculatorImpl{}
+			resp, err := calc.CalculateDamageCore(tt.req)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			verifyValue(t, "AverageDestroyed", resp.AverageDestroyed, tt.expectedAvgDestroyed)
+		})
 	}
 }
 
-// Helper: Compares two probability maps
+func TestCalculateDamageCore_DevastatingWounds(t *testing.T) {
+	tests := []struct {
+		name               string
+		req                CombatSimulationRequest
+		expectedAvgKilled  float64
+		expectedKilledDist map[int]float64
+	}{
+		{
+			name: "Devastating Wounds: no spillover, ignore save",
+			req: CombatSimulationRequest{
+				Attacker: AttackerProfile{
+					Count:             1,
+					Attacks:           DiceRoll{Modifier: 1},
+					BS:                4,
+					Strength:          4,
+					DevastatingWounds: true,
+					Damage:            DiceRoll{Modifier: 1},
+				},
+				Target: TargetProfile{
+					Count:          intPtr(3),
+					Toughness:      4,
+					Save:           2, // explicitly 2 - must be ignored by devastating
+					WoundsPerModel: 1,
+				},
+			},
+			//regular - h(1/2) * non-critW(2/6) * save(1/6) + devastating - h(1/2) * critW(1/6)
+			expectedAvgKilled: 1.0 / 9,
+			expectedKilledDist: map[int]float64{
+				0: 8.0 / 9.0,
+				1: 1.0 / 9.0,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			calc := &DamageCalculatorImpl{}
+			resp, err := calc.CalculateDamageCore(tt.req)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			verifyValue(t, "AverageDestroyed", resp.AverageDestroyed, tt.expectedAvgKilled)
+			verifyDist(t, "DestroyedDist", resp.DestroyedDist, tt.expectedKilledDist)
+		})
+	}
+}
+
+// verifyValue Checks float equality within epsilon
+func verifyValue(t *testing.T, label string, got, want float64) {
+	if math.Abs(got-want) > epsilonCore {
+		t.Errorf("%s: expected %.6f (fraction), got %.6f", label, want, got)
+	}
+}
+
+// verifyDist compares the probability map produced by the code against the expected map.
 func verifyDist(t *testing.T, label string, got, want map[int]float64) {
+	// Check if all expected keys are present and correct
 	for k, wantP := range want {
 		gotP, ok := got[k]
 		if !ok {
-			t.Errorf("%s: missing key %d in result", label, k)
+			t.Errorf("%s: missing outcome key %d in result distribution", label, k)
 			continue
 		}
 		if math.Abs(gotP-wantP) > epsilonCore {
-			t.Errorf("%s key %d: expected probability %.6f got %.6f", label, k, wantP, gotP)
+			t.Errorf("%s key %d: expected prob %.6f, got %.6f", label, k, wantP, gotP)
 		}
+	}
+	// Optional: Check for extra keys in 'got' that shouldn't be there
+	if len(got) > len(want) {
+		t.Errorf("%s: result distribution has extra outcomes (got %d keys, want %d)", label, len(got), len(want))
+	}
+}
+
+func intPtr(i int) *int {
+	return &i
+}
+
+func TestDamageCalculatorImpl_Sanitize(t *testing.T) {
+	calc := &DamageCalculatorImpl{}
+
+	tests := []struct {
+		name    string
+		req     CombatSimulationRequest
+		wantErr bool
+	}{
+		{
+			name: "Valid standard request",
+			req: CombatSimulationRequest{
+				Attacker: AttackerProfile{Count: 10, Attacks: DiceRoll{Count: 0, Sides: 0, Modifier: 2}, Damage: DiceRoll{Count: 0, Sides: 0, Modifier: 1}},
+				Target:   TargetProfile{Count: intPtr(10), WoundsPerModel: 2},
+			},
+			wantErr: false,
+		},
+		{
+			name: "Infinite target (nil/0) - Safe complexity",
+			req: CombatSimulationRequest{
+				Attacker: AttackerProfile{Count: 5, Attacks: DiceRoll{Count: 0, Sides: 0, Modifier: 1}, Damage: DiceRoll{Count: 0, Sides: 0, Modifier: 1}},
+				Target:   TargetProfile{Count: nil, WoundsPerModel: 1}, // Virtual infinity
+			},
+			wantErr: false,
+		},
+		{
+			name: "DOS Protection - Too many attacks",
+			req: CombatSimulationRequest{
+				Attacker: AttackerProfile{Count: 1000, Attacks: DiceRoll{Count: 0, Sides: 0, Modifier: 100}, Damage: DiceRoll{Count: 0, Sides: 0, Modifier: 1}},
+				Target:   TargetProfile{Count: intPtr(100), WoundsPerModel: 1},
+			},
+			wantErr: true, // Should exceed 2,000,000 score
+		},
+		{
+			name: "DOS Protection - Massive Health Pool",
+			req: CombatSimulationRequest{
+				Attacker: AttackerProfile{Count: 10, Attacks: DiceRoll{Count: 0, Sides: 0, Modifier: 10}, Damage: DiceRoll{Count: 0, Sides: 0, Modifier: 1}},
+				Target:   TargetProfile{Count: intPtr(1000), WoundsPerModel: 1000},
+			},
+			wantErr: true,
+		},
+		{
+			name: "Blast Feedback Loop - Large unit scaling",
+			req: CombatSimulationRequest{
+				// 20 attackers vs 1000 targets is a classic "horde killer" scenario
+				Attacker: AttackerProfile{Count: 20, Attacks: DiceRoll{Count: 1, Sides: 6, Modifier: 0}, Damage: DiceRoll{Count: 0, Sides: 0, Modifier: 1}, Blast: true},
+				Target:   TargetProfile{Count: intPtr(1000), WoundsPerModel: 1},
+			},
+			wantErr: true,
+		},
+		{
+			name: "Nuclear Dice String",
+			req: CombatSimulationRequest{
+				Attacker: AttackerProfile{Count: 20, Attacks: DiceRoll{Count: 10000, Sides: 1000, Modifier: 0}, Damage: DiceRoll{Count: 0, Sides: 0, Modifier: 1}},
+				Target:   TargetProfile{Count: intPtr(1), WoundsPerModel: 1},
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := calc.Sanitize(&tt.req)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Sanitize() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
 	}
 }

@@ -22,9 +22,6 @@ package calculator
 
 import (
 	"math"
-	"regexp"
-	"strconv"
-	"strings"
 )
 
 // CalculateDamageDistribution parses a damage string and returns a probability map of outcomes.
@@ -35,8 +32,8 @@ import (
 //
 // Returns:
 // map[int]float64: Mapping of DamageAmount -> Probability (0.0 to 1.0).
-func _calculateDamageDistribution(damageString string, feelNoPain *int) map[int]float64 {
-	baseDist := parseAndCalculateBaseDamage(damageString)
+func _calculateDamageDistribution(damage DiceRoll, feelNoPain *int) map[int]float64 {
+	baseDist := generateDiceDistribution(damage)
 
 	if feelNoPain == nil {
 		return baseDist
@@ -45,80 +42,39 @@ func _calculateDamageDistribution(damageString string, feelNoPain *int) map[int]
 	return applyFeelNoPain(baseDist, *feelNoPain)
 }
 
-// parseAndCalculateBaseDamage handles the regex parsing and dice math.
-// Unlike the Python version, this correctly calculates bell curves for multi-dice (e.g. 2d6).
-func parseAndCalculateBaseDamage(damageString string) map[int]float64 {
-	dist := make(map[int]float64)
-	normalized := strings.ToLower(strings.TrimSpace(damageString))
-
-	// Regex to capture: (Count)d(Faces)+(Modifier)
-	// Examples: "d6", "2d6", "2d6+1", "d3+2"
-	re := regexp.MustCompile(`^(\d*)d(\d+)\s*\+?\s*(\d*)$`)
-	matches := re.FindStringSubmatch(normalized)
-
-	// Case 1: It's a static number (e.g., "3")
-	if matches == nil {
-		val, err := strconv.Atoi(normalized)
-		if err != nil {
-			// Fallback for bad input, similar to Python version
-			dist[0] = 1.0
-			return dist
-		}
-		dist[val] = 1.0
-		return dist
+// This replaces the string-parsing version with a direct mathematical approach.
+func generateDiceDistribution(d DiceRoll) map[int]float64 {
+	// Base case: If there are no dice to roll (e.g., flat damage "3"),
+	// start with 100% probability at 0, then add the modifier.
+	if d.Count <= 0 || d.Sides <= 0 {
+		return map[int]float64{applyDamageFloor(d.Modifier): 1.0}
 	}
 
-	// Case 2: It's a dice string
-	countStr, facesStr, modStr := matches[1], matches[2], matches[3]
-
-	// Parse Count (default to 1 if empty, e.g. "d6")
-	count := 1
-	if countStr != "" {
-		count, _ = strconv.Atoi(countStr)
-	}
-
-	// Parse Faces (required)
-	faces, _ := strconv.Atoi(facesStr)
-
-	// Parse Modifier (default to 0)
-	modifier := 0
-	if modStr != "" {
-		modifier, _ = strconv.Atoi(modStr)
-	}
-
-	// Logic for Probability Distribution
-	if count == 0 {
-		dist[modifier] = 1.0
-		return dist
-	}
-
-	// Start with one die
-	// Probability of rolling x on 1dFaces is 1/Faces
+	// 1. Initialize distribution with the first die (1 to Sides)
 	currentDist := make(map[int]float64)
-	prob := 1.0 / float64(faces)
-	for i := 1; i <= faces; i++ {
+	prob := 1.0 / float64(d.Sides)
+	for i := 1; i <= d.Sides; i++ {
 		currentDist[i] = prob
 	}
 
-	// Convolve for multiple dice (e.g., combining distributions for 2d6)
-	// We repeat the convolution 'count - 1' times.
-	for i := 1; i < count; i++ {
+	// 2. Convolve for additional dice (O(Count * Sides * Outcomes))
+	// Example: turning 1d6 distribution into 2d6, then 3d6...
+	for i := 1; i < d.Count; i++ {
 		newDist := make(map[int]float64)
 		for valA, probA := range currentDist {
-			// Convolve with a single fresh die (1 to Faces)
-			for valB := 1; valB <= faces; valB++ {
-				// Probability of this combination is ProbA * ProbB
-				// Resulting damage is ValA + ValB
-				newDist[valA+valB] += probA * prob
+			for valDie := 1; valDie <= d.Sides; valDie++ {
+				newDist[valA+valDie] += probA * prob
 			}
 		}
 		currentDist = newDist
 	}
 
-	// Apply Modifier to the final distribution
+	// 3. Apply Modifier and Damage Floor
+	// In 40k, damage/attacks generally cannot be modified below 1.
 	finalDist := make(map[int]float64)
-	for k, v := range currentDist {
-		finalDist[k+modifier] = v
+	for val, p := range currentDist {
+		result := applyDamageFloor(val + d.Modifier)
+		finalDist[result] += p
 	}
 
 	return finalDist

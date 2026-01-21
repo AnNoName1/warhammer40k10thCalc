@@ -22,11 +22,9 @@ package calculator
 
 import (
 	"math"
-
-	damagerequest "github.com/AnNoName1/warhammer40k10thCalc/pkg/models"
 )
 
-// _calculateWoundProbability calculates the probability that a single successful hit
+// CalculateWoundProbability calculates the probability that a single successful hit
 // will result in a wound on the target.
 //
 // Arguments:
@@ -39,65 +37,63 @@ import (
 // Returns:
 // (float64, float64): Probability of a normal wound and a devastating wound.
 
-func _calculateWoundProbability(s int, t int, rerollType damagerequest.RerollType, woundModifier int, devastatingWounds bool) (float64, float64) {
+func CalculateWoundProbability(s int, t int, rerollType RerollType, woundModifier int, devastatingWounds bool,
+	CriticalWoundThreshold int) (float64, float64) {
 	// Constants
 	const oneSixth = 1.0 / 6.0
-	const fiveSixths = 5.0 / 6.0
 
 	// 1. Determine the required Wound Roll (Target Wound Roll)
-	// Compare S (Strength) and T (Toughness)
 	var targetRoll int
 	if s*2 <= t {
-		targetRoll = 6 // S <= T/2: requires 6+
+		targetRoll = 6
 	} else if s < t {
-		targetRoll = 5 // S < T: requires 5+
+		targetRoll = 5
 	} else if s >= t*2 {
-		targetRoll = 2 // S >= 2T: requires 2+
+		targetRoll = 2
 	} else if s > t {
-		targetRoll = 3 // S > T: requires 3+
+		targetRoll = 3
 	} else {
-		targetRoll = 4 // S == T: requires 4+
+		targetRoll = 4
 	}
 
-	// 2. Apply the modifier (-1/+1)
+	// 2. Apply the modifier and clamp between 2+ and 6+
 	finalTargetRoll := float64(targetRoll) - float64(woundModifier)
-
-	// Limit the required roll: minimum 2+ (5/6 chance) and maximum 6+ (1/6 chance)
 	finalTargetRoll = math.Max(2.0, math.Min(6.0, finalTargetRoll))
 
-	// Chance to wound (base)
-	// (7 - finalTargetRoll) / 6.0
+	// 1. Calculate Base Success Chance (Normal math)
 	woundChance := (7.0 - finalTargetRoll) / 6.0
-	missChance := 1.0 - woundChance
 
-	// 3. Process Rerolls
-	if rerollType == damagerequest.RerollOnes {
-		// Reroll of 1 (1/6) on a wound with woundChance
-		rerollChance := oneSixth
-		woundChance += rerollChance * woundChance
-	} else if rerollType == damagerequest.RerollFail {
-		// Reroll of a miss (missChance) on a wound with woundChance
-		woundChance += missChance * woundChance
+	// 2. Calculate Critical Success Chance
+	if CriticalWoundThreshold < 2 || CriticalWoundThreshold > 6 {
+		CriticalWoundThreshold = 6
+	}
+	critChance := (7.0 - float64(CriticalWoundThreshold)) / 6.0
+
+	// 3. APPLY RULE: Critical Wounds are always successful
+	// If critChance is higher than woundChance (e.g., Anti-2+ vs T12),
+	// the woundChance must be elevated to the critChance.
+	if critChance > woundChance {
+		woundChance = critChance
 	}
 
-	// 4. Process [DEVASTATING WOUNDS]
+	missChance := 1.0 - woundChance
+
+	// 4. Process Rerolls
+	if rerollType == RerollOnes {
+		// Rerolling a 1 gives a 1/6 chance to hit the "new" woundChance
+		// and a 1/6 chance to hit the "new" critChance
+		woundChance += oneSixth * woundChance
+		critChance += oneSixth * critChance
+	} else if rerollType == RerollFail {
+		woundChance += missChance * woundChance
+		critChance += missChance * critChance
+	}
+
+	// 5. Process [DEVASTATING WOUNDS]
 	devastatingWoundChance := 0.0
 	if devastatingWounds {
-		// Base chance for Devastating Wound (a roll of 6)
-		devastatingWoundChance = oneSixth
-
-		if rerollType == damagerequest.RerollOnes {
-			// Reroll of 1 into a 6: (1/6) * (1/6)
-			devastatingWoundChance += oneSixth * oneSixth
-		} else if rerollType == damagerequest.RerollFail {
-			// Reroll of a miss (missChance) into a 6 (1/6)
-			// Probability: (1 - woundChance) * (1/6)
-			devastatingWoundChance += missChance * oneSixth
-		}
-
-		// Devastating Wounds are excluded from normal wounds
+		devastatingWoundChance = critChance
 		woundChance -= devastatingWoundChance
-		// Constraint: woundChance must not be negative
 		woundChance = math.Max(0.0, woundChance)
 	}
 

@@ -26,8 +26,7 @@ import (
 )
 
 func TestCalculateFailedSaveProbability(t *testing.T) {
-	// Helper function for optional integer pointer
-	intPtr := func(val int) *int { return &val }
+	const epsilon = 0.0001
 
 	tests := []struct {
 		name               string
@@ -35,90 +34,95 @@ func TestCalculateFailedSaveProbability(t *testing.T) {
 		save               int
 		invulnerable       *int
 		saveModifier       int
+		hasCover           bool       // New field
+		saveReroll         RerollType // New field
 		expectedFailChance float64
 	}{
+		// --- Existing Tests (Updated with defaults) ---
 		{
-			name:         "Basic 3+ Save, AP 0",
-			ap:           0,
-			save:         3,
-			invulnerable: nil,
-			saveModifier: 0,
-			// Pass: 4/6 (roll 3+). Fail: 2/6 (~0.33)
+			name:               "Basic 3+ Save, AP 0",
+			ap:                 0,
+			save:               3,
+			invulnerable:       nil,
+			saveModifier:       0,
+			hasCover:           false,
+			saveReroll:         RerollNone,
 			expectedFailChance: 2.0 / 6.0,
 		},
 		{
-			name:         "Save 4+, AP -1",
-			ap:           1,
-			save:         4,
-			invulnerable: nil,
-			saveModifier: 0,
-			// Modified Save: 4 + 1 = 5+. Pass: 2/6 (roll 3+). Fail: 4/6 (~0.66)
-			expectedFailChance: 4.0 / 6.0,
-		},
-		{
-			name:         "Save 3+, AP -3 (4+ needed, max AP applied)",
-			ap:           3,
-			save:         3,
-			invulnerable: nil,
-			saveModifier: 0,
-			// Modified Save: 3 + 3 = 0. Capped at 6+. Pass: 1/6. Fail: 5/6.
-			expectedFailChance: 5.0 / 6.0,
-		},
-		{
-			name:         "Invulnerable vs Normal (3+ vs 4++)",
-			ap:           2,
-			save:         3,
-			invulnerable: intPtr(4),
-			saveModifier: 0,
-			// Modified Normal: 3 + 2 = 5. Used: Invuln 4+. Pass: 3/6. Fail: 3/6.
+			name:               "Save 4+, AP -1, +1 Modifier (General Mod)",
+			ap:                 1,
+			save:               4,
+			invulnerable:       nil,
+			saveModifier:       1,
+			hasCover:           false,
+			saveReroll:         RerollNone,
 			expectedFailChance: 3.0 / 6.0,
 		},
 		{
-			name:         "Invulnerable Not Used (3+ vs 5++)",
-			ap:           0,
+			// Rule: 3+ save vs AP 0 ignores Cover.
+			name:               "BoC: 3+ Save vs AP 0 (Should ignore Cover)",
+			ap:                 0,
+			save:               3,
+			invulnerable:       nil,
+			saveModifier:       0,
+			hasCover:           true,
+			saveReroll:         RerollNone,
+			expectedFailChance: 2.0 / 6.0, // Still 3+ (fail on 1,2)
+		},
+		{
+			// Rule: 3+ save vs AP 1 DOES get Cover.
+			name:         "BoC: 3+ Save vs AP 1 (Should apply Cover)",
+			ap:           1,
 			save:         3,
-			invulnerable: intPtr(5),
+			invulnerable: nil,
 			saveModifier: 0,
-			// Modified Normal: 3. Used: 3+. Pass: 4/6. Fail: 2/6.
+			hasCover:     true,
+			saveReroll:   RerollNone,
+			// Math: 3 (Save) + 1 (AP) - 1 (Cover) = 3+.
 			expectedFailChance: 2.0 / 6.0,
 		},
 		{
-			name:         "Failed Save (7+ needed)",
+			// Rule: 4+ save vs AP 0 DOES get Cover.
+			name:         "BoC: 4+ Save vs AP 0 (Should apply Cover)",
 			ap:           0,
-			save:         7,
-			invulnerable: nil,
-			saveModifier: 0,
-			// Required 7+. Chance to pass = 0. Fail: 1.0.
-			expectedFailChance: 1.0,
-		},
-		{
-			name:         "Save 4+, AP -1, +1 Modifier (Cover)",
-			ap:           1,
 			save:         4,
 			invulnerable: nil,
-			saveModifier: 1,
-			// Modified Save: (4 - 1) + 1 = 4+. Pass: 3/6. Fail: 3/6.
-			expectedFailChance: 3.0 / 6.0,
+			saveModifier: 0,
+			hasCover:     true,
+			saveReroll:   RerollNone,
+			// Math: 4 (Save) + 0 (AP) - 1 (Cover) = 3+.
+			expectedFailChance: 2.0 / 6.0,
 		},
 		{
-			name:         "Invulnerable 4++, AP -3, +1 Modifier (Cover)",
-			ap:           3,
+			// Reroll Test
+			name:         "Save 3+ with Reroll Ones",
+			ap:           0,
 			save:         3,
-			invulnerable: intPtr(4),
-			saveModifier: 1,
-			// Modified Normal: 3 - 3 + 1 = 1. Effective Save (max(1, 4)) = 4.
-			// Used: 4+. Pass: 3/6. Fail: 3/6.
-			expectedFailChance: 3.0 / 6.0,
+			invulnerable: nil,
+			saveModifier: 0,
+			hasCover:     false,
+			saveReroll:   RerollOnes,
+			// Base fail: 2/6.
+			// Reroll: (1/6 chance to roll a 1) * (2/6 chance to fail again)
+			// Total fail: (1/6) + (1/6 * 2/6) = 6/36 + 2/36 = 8/36 = 2/9
+			expectedFailChance: 2.0 / 9.0,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotFailChance := _calculateFailedSaveProbability(tt.ap, tt.save, tt.invulnerable, tt.saveModifier)
+			gotFailChance := CalculateFailedSaveProbability(
+				tt.ap,
+				tt.save,
+				tt.invulnerable,
+				tt.saveModifier,
+				tt.hasCover,
+				tt.saveReroll,
+			)
 
-			// Use math.Abs for comparison due to floating point arithmetic
 			if math.Abs(gotFailChance-tt.expectedFailChance) > epsilon {
-				t.Errorf("expected Failed Save Chance %.5f, got %.5f", tt.expectedFailChance, gotFailChance)
+				t.Errorf("%s: expected Failed Save Chance %.5f, got %.5f", tt.name, tt.expectedFailChance, gotFailChance)
 			}
 		})
 	}

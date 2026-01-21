@@ -30,40 +30,95 @@ func TestCalculateAttackDistribution(t *testing.T) {
 
 	tests := []struct {
 		name          string
-		attackString  string
-		shouldError   bool
-		// We verify specific points in the distribution to ensure correctness
+		attacks       DiceRoll
+		attackerCount int
+		blast         bool
+		targetCount   int
 		expectedCheck map[int]float64
 	}{
 		{
-			name:         "Static Attacks 4",
-			attackString: "4",
-			shouldError:  false,
+			name:          "Static Attacks 4 (No Blast, 1 model)",
+			attacks:       DiceRoll{Count: 0, Sides: 0, Modifier: 4},
+			attackerCount: 1,
+			blast:         false,
+			targetCount:   10,
+			expectedCheck: map[int]float64{4: 1.0},
+		},
+		{
+			name:          "Static Attacks 4 (No Blast, 2 models)",
+			attacks:       DiceRoll{Count: 0, Sides: 0, Modifier: 4},
+			attackerCount: 2,
+			blast:         false,
+			targetCount:   10,
+			expectedCheck: map[int]float64{8: 1.0},
+		},
+		{
+			name:          "Static 4 with Blast (11 targets -> +2 hits)",
+			attacks:       DiceRoll{Count: 0, Sides: 0, Modifier: 4},
+			attackerCount: 1,
+			blast:         true,
+			targetCount:   11, // floor(11/5) = 2
 			expectedCheck: map[int]float64{
-				4: 1.0,
+				6: 1.0, // 4 + 2
 			},
 		},
 		{
-			name:         "Basic d6",
-			attackString: "d6",
-			shouldError:  false,
+			name:          "Static 4 with Blast (11 targets -> +2 hits), blast used separately for each attack",
+			attacks:       DiceRoll{Count: 0, Sides: 0, Modifier: 4},
+			attackerCount: 2,
+			blast:         true,
+			targetCount:   11, // floor(11/5) = 2
 			expectedCheck: map[int]float64{
-				1: 1.0 / 6.0,
+				12: 1.0, // 4 + 2
+			},
+		},
+		{
+			name:          "d6 with Blast (5 targets -> +1 hit)",
+			attacks:       DiceRoll{Count: 1, Sides: 6, Modifier: 0},
+			attackerCount: 1,
+			blast:         true,
+			targetCount:   5,
+			expectedCheck: map[int]float64{
 				2: 1.0 / 6.0,
 				3: 1.0 / 6.0,
 				4: 1.0 / 6.0,
 				5: 1.0 / 6.0,
 				6: 1.0 / 6.0,
+				7: 1.0 / 6.0,
 			},
 		},
 		{
-			name:         "2d6 (Bell Curve Convolution)",
-			attackString: "2d6",
-			shouldError:  false,
-			// Logic:
-			// 2 (1+1) -> 1/36
-			// 7 (Avg) -> 6/36
-			// 12 (6+6) -> 1/36
+			name:          "d3 with Blast (Under 5 targets -> +0 hits)",
+			attacks:       DiceRoll{Count: 1, Sides: 3, Modifier: 0},
+			attackerCount: 1,
+			blast:         true,
+			targetCount:   4,
+			expectedCheck: map[int]float64{
+				1: 1.0 / 3.0,
+				2: 1.0 / 3.0,
+				3: 1.0 / 3.0,
+			},
+		},
+		{
+			name:          "2d3+1 (Complex, No Blast)",
+			attacks:       DiceRoll{Count: 2, Sides: 3, Modifier: 1},
+			attackerCount: 1,
+			blast:         false,
+			targetCount:   10,
+			expectedCheck: map[int]float64{
+				3: 1.0 / 9.0,
+				4: 2.0 / 9.0,
+				5: 3.0 / 9.0,
+				6: 2.0 / 9.0,
+				7: 1.0 / 9.0,
+			},
+		},
+		{
+			name:          "Two models with d6 attacks (2 × 1d6 = 2d6)",
+			attacks:       DiceRoll{Count: 1, Sides: 6, Modifier: 0},
+			attackerCount: 2,
+			blast:         false,
+			targetCount:   1,
 			expectedCheck: map[int]float64{
 				2:  1.0 / 36.0,
 				3:  2.0 / 36.0,
@@ -79,88 +134,42 @@ func TestCalculateAttackDistribution(t *testing.T) {
 			},
 		},
 		{
-			name:         "d3+1 (Modifier)",
-			attackString: "d3+1",
-			shouldError:  false,
+			name:          "Damage Floor (d3-2 rounds to 1)",
+			attacks:       DiceRoll{Count: 1, Sides: 3, Modifier: -2},
+			attackerCount: 1,
+			blast:         false,
+			targetCount:   1,
 			expectedCheck: map[int]float64{
-				2: 1.0 / 3.0, // rolled 1 + 1
-				3: 1.0 / 3.0, // rolled 2 + 1
-				4: 1.0 / 3.0, // rolled 3 + 1
-			},
-		},
-		{
-			name:         "2d3+1 (Complex)",
-			attackString: "2d3+1",
-			shouldError:  false,
-			// 2d3 distribution:
-			// 2 (1+1): 1/9
-			// 3 (1+2, 2+1): 2/9
-			// 4 (1+3, 2+2, 3+1): 3/9
-			// 5 (2+3, 3+2): 2/9
-			// 6 (3+3): 1/9
-			// Apply +1 modifier -> Shift keys by 1
-			expectedCheck: map[int]float64{
-				3: 1.0 / 9.0,
-				4: 2.0 / 9.0,
-				5: 3.0 / 9.0,
-				6: 2.0 / 9.0,
-				7: 1.0 / 9.0,
-			},
-		},
-		{
-			name:         "Garbage Input",
-			attackString: "invalid_dice",
-			shouldError:  true,
-			expectedCheck: nil,
-		},
-		{
-			name:         "Zero Dice Count (0d6)",
-			attackString: "0d6",
-			shouldError:  false,
-			expectedCheck: map[int]float64{
-				0: 1.0,
+				1: 1.0,
 			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotDist, err := CalculateAttackDistribution(tt.attackString)
+			// Logic now returns map directly since parsing errors are moved to DTO layer
+			gotDist := CalculateAttackDistribution(tt.attacks, tt.attackerCount, tt.blast, tt.targetCount)
 
-			// 1. Check Error State
-			if tt.shouldError {
-				if err == nil {
-					t.Errorf("expected error for input '%s', but got nil", tt.attackString)
-				}
-				return // Stop checking distribution if we expected an error
-			}
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-
-			// 2. Check Distribution Values
 			for val, expectedProb := range tt.expectedCheck {
 				gotProb, exists := gotDist[val]
 				if !exists {
-					// Treat missing as 0.0, but if we expected >0 that's an error
 					if expectedProb > epsilon {
-						t.Errorf("Attack value %d missing from distribution", val)
+						t.Errorf("Value %d missing. Expected prob %.4f", val, expectedProb)
 					}
 					continue
 				}
 
 				if math.Abs(gotProb-expectedProb) > epsilon {
-					t.Errorf("For Attacks %d: expected prob %.4f, got %.4f", val, expectedProb, gotProb)
+					t.Errorf("For %d: expected %.4f, got %.4f", val, expectedProb, gotProb)
 				}
 			}
 
-			// 3. Verify Total Probability Sums to 1.0
 			sum := 0.0
 			for _, p := range gotDist {
 				sum += p
 			}
 			if math.Abs(sum-1.0) > epsilon {
-				t.Errorf("Total probability sum is %.4f, expected 1.0", sum)
+				t.Errorf("Total sum %.4f, expected 1.0", sum)
 			}
 		})
 	}

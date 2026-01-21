@@ -26,57 +26,93 @@ import (
 	"log"
 	"net/http"
 
-	damagerequest "github.com/AnNoName1/warhammer40k10thCalc/pkg/models"
-
 	calculator "github.com/AnNoName1/warhammer40k10thCalc/internal/calculator"
 	middleware "github.com/AnNoName1/warhammer40k10thCalc/internal/middleware"
+	damagerequest "github.com/AnNoName1/warhammer40k10thCalc/pkg/models"
 )
 
-// CalculateDamageHandler calculates the expected damage.
+type DamageCalculator interface {
+	CalculateDamageCore(calculator.CombatSimulationRequest) (calculator.SimulationResult, error)
+}
+
+// CalculateDamageHandler is the HTTP handler for calculating damage.
 //
 //	@Summary		Calculate Damage
-//	@Description	Calculates statistical damage based on input parameters
+//	@Description	Calculates statistical damage based on input parameters like attack rolls, modifiers, and defense stats.
 //	@Tags			damage
 //	@Accept			json
 //	@Produce		json
-//	@Param			X-Request-ID	header		string						false	"Request UUID"
-//	@Param			request			body		damagerequest.DamageRequest	true	"Calculation Parameters"
-//	@Success		200				{object}	damagerequest.DamageResponse
-//	@Router			/damage/calculate [post]
-func CalculateDamageHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		// Use the helper for Method Not Allowed
-		SendError(w, "", "Method Not Allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	reqID := middleware.GetRequestID(r.Context())
-
-	var req damagerequest.DamageRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		log.Printf("[%s] JSON decode error: %v", reqID, err)
-		msg := "Malformed JSON or invalid data types"
-		if err == io.EOF {
-			msg = "Request body cannot be empty"
+//	@Param			X-Request-ID	header		string						false	"Request UUID"		// Optional custom header for request tracking
+//	@Param			request			body		damagerequest.DamageRequest	true	"Calculation Parameters" // The main request body containing all input stats
+//	@Success		200				{object}	damagerequest.DamageResponse	// Returns the calculated damage results
+//	@Router			/damage/calculate [post]		// Route to calculate damage (POST request)
+func CalculateDamageHandler(calculator DamageCalculator) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Check if the HTTP method is POST. If not, return a 405 (Method Not Allowed).
+		if r.Method != http.MethodPost {
+			// Use a helper function to send an error response for method mismatch
+			SendError(w, "", "Method Not Allowed", http.StatusMethodNotAllowed)
+			return
 		}
-		// Use the helper for 400 errors
-		SendError(w, reqID, msg, http.StatusBadRequest)
-		return
-	}
+
+		// Get the Request ID from middleware (useful for tracing/logging)
+		reqID := middleware.GetRequestID(r.Context())
+
+		// Initialize a variable to store the decoded request data
+		var dto damagerequest.DamageRequestDTO
+
+		// Attempt to decode the incoming JSON request body into the DamageRequest struct
+		if err := json.NewDecoder(r.Body).Decode(&dto); err != nil {
+			// Log the error for debugging purposes
+			log.Printf("[%s] JSON decode error: %v", reqID, err)
+
+			// Define a default error message in case of malformed JSON
+			msg := "Malformed JSON or invalid data types"
+
+			// If the error is just an empty body (EOF), provide a specific message
+			if err == io.EOF {
+				msg = "Request body cannot be empty"
+			}
+
+			// Send an error response with the appropriate status code (400 Bad Request)
+			SendError(w, reqID, msg, http.StatusBadRequest)
+			return
+		}
 
 	resp, err := calculator.CalculateDamageCore(req)
 	if err != nil {
 		log.Printf("[%s] Calculation error: %v", reqID, err)
 		// Use the helper for business logic errors
-		SendError(w, reqID, err.Error(), http.StatusBadRequest)
-		return
-	}
 
-	resp.RequestUUID = reqID
+		domainReq, err := dto.ToDomain()
+		if err != nil {
+			// If parsing a dice string fails,
+			// it will be caught here.
+			SendError(w, reqID, err.Error(), http.StatusUnprocessableEntity)
+			return
+		}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		log.Printf("[%s] Error encoding JSON response: %v", reqID, err)
+		// Call the business logic layer (calculator) to calculate damage using the decoded request data
+		result, err := calculator.CalculateDamageCore(domainReq)
+		if err != nil {
+			// Log calculation errors for debugging
+			log.Printf("[%s] Calculation error: %v", reqID, err)
+
+			// Send a business logic error response (400 Bad Request)
+			SendError(w, reqID, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		// Assign the Request UUID to the response for tracking purposes
+		resp := damagerequest.MapResultToResponse(result, reqID)
+
+		// Set the response content type to JSON
+		w.Header().Set("Content-Type", "application/json")
+		// Send a 200 OK status with the calculated damage results encoded as JSON
+		w.WriteHeader(http.StatusOK)
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			// Log any errors in encoding the response to JSON
+			log.Printf("[%s] Error encoding JSON response: %v", reqID, err)
+		}
 	}
 }

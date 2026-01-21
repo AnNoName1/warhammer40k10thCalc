@@ -1,23 +1,3 @@
-// Copyright (c) 2025 Olbutov Aleksandr
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in
-// all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
-
 package calculator
 
 import (
@@ -30,24 +10,23 @@ func TestCalculateDamageDistribution(t *testing.T) {
 	const epsilon = 1e-6
 
 	tests := []struct {
-		name         string
-		damageString string
-		fnp          *int
-		// We verify specific points in the distribution to ensure correctness
+		name          string
+		damage        DiceRoll
+		fnp           *int
 		expectedCheck map[int]float64
 	}{
 		{
-			name:         "Static Damage 3",
-			damageString: "3",
-			fnp:          nil,
+			name:   "Static Damage 3",
+			damage: DiceRoll{Count: 0, Sides: 0, Modifier: 3},
+			fnp:    nil,
 			expectedCheck: map[int]float64{
 				3: 1.0,
 			},
 		},
 		{
-			name:         "Basic d6",
-			damageString: "d6",
-			fnp:          nil,
+			name:   "Basic d6",
+			damage: DiceRoll{Count: 1, Sides: 6, Modifier: 0},
+			fnp:    nil,
 			expectedCheck: map[int]float64{
 				1: 1.0 / 6.0,
 				2: 1.0 / 6.0,
@@ -58,14 +37,9 @@ func TestCalculateDamageDistribution(t *testing.T) {
 			},
 		},
 		{
-			name:         "2d6 (Bell Curve Check)",
-			damageString: "2d6",
-			fnp:          nil,
-			// The Python script would have failed this because it treated 2d6 as flat.
-			// Correct math:
-			// 2 (1+1) -> 1/36 (~0.0277)
-			// 7 (Average) -> 6/36 (~0.1666)
-			// 12 (6+6) -> 1/36
+			name:   "2d6 (Bell Curve Check)",
+			damage: DiceRoll{Count: 2, Sides: 6, Modifier: 0},
+			fnp:    nil,
 			expectedCheck: map[int]float64{
 				2:  1.0 / 36.0,
 				3:  2.0 / 36.0,
@@ -81,9 +55,9 @@ func TestCalculateDamageDistribution(t *testing.T) {
 			},
 		},
 		{
-			name:         "d3+1",
-			damageString: "d3+1",
-			fnp:          nil,
+			name:   "d3+1",
+			damage: DiceRoll{Count: 1, Sides: 3, Modifier: 1},
+			fnp:    nil,
 			expectedCheck: map[int]float64{
 				2: 1.0 / 3.0, // rolled 1 + 1
 				3: 1.0 / 3.0, // rolled 2 + 1
@@ -91,15 +65,9 @@ func TestCalculateDamageDistribution(t *testing.T) {
 			},
 		},
 		{
-			name:         "Static 2 with FNP 5+",
-			damageString: "2",
-			fnp:          intPtr(5),
-			// Incoming Damage: 2
-			// FNP 5+ means P(Save)=2/6, P(Fail)=4/36
-			// Binomial Outcomes (Damage Taken = Failures):
-			// 0 Dmg (2 saves): (1/3)^2 = 1/9
-			// 1 Dmg (1 save, 1 fail): 2 * (1/3)*(2/3) = 4/9
-			// 2 Dmg (0 saves, 2 fail): (2/3)^2 = 4/9
+			name:   "Static 2 with FNP 5+",
+			damage: DiceRoll{Count: 0, Sides: 0, Modifier: 2},
+			fnp:    intPtr(5),
 			expectedCheck: map[int]float64{
 				0: 1.0 / 9.0,
 				1: 4.0 / 9.0,
@@ -107,12 +75,9 @@ func TestCalculateDamageDistribution(t *testing.T) {
 			},
 		},
 		{
-			name:         "Single d1 (Fixed 1) with FNP 6+",
-			damageString: "d1",
-			fnp:          intPtr(6),
-			// Incoming 1. P(Save)=1/6, P(Fail)=5/6.
-			// 0 Dmg (Save): 1/6
-			// 1 Dmg (Fail): 5/6
+			name:   "Single d1 (Fixed 1) with FNP 6+",
+			damage: DiceRoll{Count: 1, Sides: 1, Modifier: 0},
+			fnp:    intPtr(6),
 			expectedCheck: map[int]float64{
 				0: 1.0 / 6.0,
 				1: 5.0 / 6.0,
@@ -122,12 +87,12 @@ func TestCalculateDamageDistribution(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotDist := _calculateDamageDistribution(tt.damageString, tt.fnp)
+			// Calling the internal distribution logic
+			gotDist := _calculateDamageDistribution(tt.damage, tt.fnp)
 
 			for dmgVal, expectedProb := range tt.expectedCheck {
 				gotProb, exists := gotDist[dmgVal]
 				if !exists {
-					// Treat missing as 0.0, but if we expected >0 that's an error
 					if expectedProb > epsilon {
 						t.Errorf("Damage value %d missing from distribution", dmgVal)
 					}
@@ -139,7 +104,6 @@ func TestCalculateDamageDistribution(t *testing.T) {
 				}
 			}
 
-			// Optional: Check if sum is 1.0
 			sum := 0.0
 			for _, p := range gotDist {
 				sum += p
