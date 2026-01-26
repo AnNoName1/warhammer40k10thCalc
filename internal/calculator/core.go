@@ -393,13 +393,40 @@ func GetMaxFromDice(d DiceRoll) int {
 }
 
 func (d *DamageCalculatorImpl) Sanitize(req *CombatSimulationRequest) error {
-	// 1. Get the "Ceiling" of the attack sequence
+	// 1. Critical Thresholds (0 is uninitialized/impossible, treat as 6)
+	if req.Settings.CriticalHitThreshold < 2 || req.Settings.CriticalHitThreshold > 6 {
+		req.Settings.CriticalHitThreshold = 6
+	}
+	if req.Settings.CriticalWoundThreshold < 2 || req.Settings.CriticalWoundThreshold > 6 {
+		req.Settings.CriticalWoundThreshold = 6
+	}
+
+	// 2. Ballistic Skill (Minimum 2+ per core rules, rolls of 1 always fail)
+	if !req.Attacker.Torrent {
+		if req.Attacker.BS < 2 {
+			req.Attacker.BS = 2
+		} else if req.Attacker.BS > 6 {
+			req.Attacker.BS = 6
+		}
+	}
+
+	// 3. Save Floor (1+ saves are treated as 2+; natural 1 always fails)
+	if req.Target.Save < 2 {
+		req.Target.Save = 2
+	}
+
+	// 4. Pointer-based defaults (if present)
+	if req.Target.Invulnerable != nil && (*req.Target.Invulnerable < 2) {
+		*req.Target.Invulnerable = 2
+	}
+
+	// 5. Get the "Ceiling" of the attack sequence
 	maxAttacks := GetMaxFromDice(req.Attacker.Attacks) * req.Attacker.Count
 	maxDamage := GetMaxFromDice(req.Attacker.Damage)
 
 	devastatingDoSpillover := false
 
-	// 2. Resolve the Target Count (Business Logic for "Infinite")
+	// 6. Resolve the Target Count (Business Logic for "Infinite")
 	var effectiveTargetCount int
 
 	if req.Target.Count == nil {
@@ -417,29 +444,29 @@ func (d *DamageCalculatorImpl) Sanitize(req *CombatSimulationRequest) error {
 		if effectiveTargetCount > 200 {
 			effectiveTargetCount = 200
 		}
-
-		// FIX: Assign the address of our calculated variable back to the request.
 		// Go's escape analysis will move effectiveTargetCount to the heap.
 		req.Target.Count = &effectiveTargetCount
 	} else {
 		effectiveTargetCount = *req.Target.Count
 	}
 
-	// 3. Blast Correction (Feedback Loop)
+	// 7. Blast Correction (Feedback Loop)
 	// If Blast is on, the target count actually INCREASES the number of attacks.
 	if req.Attacker.Blast {
-		// Blast adds 1 attack per 5 models (Warhammer 10th Ed Rule).
-		addedAttacks := (effectiveTargetCount / 5) * req.Attacker.Count
-		maxAttacks += addedAttacks
+		bonus := effectiveTargetCount / 5
+		// Update the actual domain object so the calculator sees it
+		req.Attacker.Attacks.Modifier += bonus
+		// Recalculate maxAttacks for the complexity score
+		maxAttacks = GetMaxFromDice(req.Attacker.Attacks) * req.Attacker.Count
 	}
 
-	// 4. Calculate Final Complexity Score
+	// 8. Calculate Final Complexity Score
 	// State Space = Width (Models * HP). MaxAttacks = Depth.
 	stateSpace := effectiveTargetCount * req.Target.WoundsPerModel
 	// If each attack requires iterating over the state space:
 	score := maxAttacks * (stateSpace * stateSpace) // Or a lower multiplier like * 10
 
-	// 5. The Threshold Check
+	// 9. The Threshold Check
 	const Threshold = 25_000_000
 	if score > Threshold {
 		return fmt.Errorf("simulation complexity %d exceeds limit %d. (Targeting ~%d models with ~%d max attacks)",
