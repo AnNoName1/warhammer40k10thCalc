@@ -1053,3 +1053,24 @@ func TestStressTest_LargeNumbers(t *testing.T) {
 		})
 	}
 }
+
+func BenchmarkComplexityScaling(b *testing.B) {
+	calc := &DamageCalculatorImpl{}
+
+	// Scale n to find the inflection point where "seconds" turn into "minutes"
+	for _, n := range []int{10, 50, 100, 500, 1000} {
+		b.Run(fmt.Sprintf("AttackerCount-%d", n), func(b *testing.B) {
+			req := generateBaseRequest()
+			req.Attacker.Count = n
+
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				res, _ := calc.CalculateDamageCore(req)
+
+				// Telemetry: Track the size of the resulting distribution
+				// Large distributions = high GC pressure
+				b.ReportMetric(float64(len(res.DestroyedDist)), "buckets/op")
+			}
+		})
+	}
+}

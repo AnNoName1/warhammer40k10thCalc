@@ -280,32 +280,34 @@ func (d *DamageCalculatorImpl) CalculateDamageCore(req CombatSimulationRequest) 
 	}
 
 	// ── 11. Damage allocation ──────────────────────────────────────
-	finalDestroyedDist := make(map[int]float64)
 	dmgWithFnp := _calculateDamageDistribution(req.Attacker.Damage, req.Target.FeelNoPain) // FNP applied here
 	dmgNoFnp := _calculateDamageDistribution(req.Attacker.Damage, req.Target.FeelNoPain)   // FNP for devastating - latest rules
+	finalKilledSlice := make([]float64, *req.Target.Count+1)
 
 	for nw := 0; nw <= maxHits; nw++ {
+		row := jointNormalBeforeSave_Dev[nw]
 		for dw := 0; dw <= maxHits; dw++ {
-			pJoint := jointNormalBeforeSave_Dev[nw][dw]
+			pJoint := row[dw]
 			if pJoint < 1e-12 {
 				continue
 			}
+
 			unsavedNormalDist := getBinomialVector(nw, probSaveFailed)
 			for u, pU := range unsavedNormalDist {
-				if pU < 1e-12 {
+				weight := pJoint * pU
+				if weight < 1e-15 {
 					continue
 				}
-				weight := pJoint * pU
-				killedMap := resolveDamageSequentialSplit(
+
+				// MODIFIED: Pass finalKilledSlice directly to accumulate results
+				resolveDamageToSlice(
 					u, dw,
-					dmgWithFnp,
-					dmgNoFnp,
+					dmgWithFnp, dmgNoFnp,
 					req.Target.WoundsPerModel,
 					*req.Target.Count,
+					finalKilledSlice,
+					weight,
 				)
-				for k, pk := range killedMap {
-					finalDestroyedDist[k] += weight * pk
-				}
 			}
 		}
 	}
@@ -314,7 +316,7 @@ func (d *DamageCalculatorImpl) CalculateDamageCore(req CombatSimulationRequest) 
 		vectorToMap(finalHitsDist),
 		vectorToMap(totalWoundsDist),
 		vectorToMap(finalUnsavedDist),
-		finalDestroyedDist,
+		vectorToMap(finalKilledSlice),
 	), nil
 }
 
@@ -342,26 +344,6 @@ func getBinomialVector(n int, p float64) []float64 {
 	return dist
 }
 
-// convolve performs a discrete convolution of two probability distributions.
-func convolve(a, b []float64) []float64 {
-	if len(a) == 0 {
-		return b
-	}
-	if len(b) == 0 {
-		return a
-	}
-	res := make([]float64, len(a)+len(b)-1)
-	for i, va := range a {
-		if va < 1e-18 {
-			continue
-		}
-		for j, vb := range b {
-			res[i+j] += va * vb
-		}
-	}
-	return res
-}
-
 // vectorToMap translates the internal vector back to the map used in the output contract.
 func vectorToMap(vec []float64) map[int]float64 {
 	res := make(map[int]float64)
@@ -373,44 +355,12 @@ func vectorToMap(vec []float64) map[int]float64 {
 	return res
 }
 
-// In resolveDamageSequentialSplit: ensure NO spill for BOTH (your original applyWoundsLinear with spills=false for both)
-func resolveDamageSequentialSplit(
-	nNorm, nMortal int,
-	normDmgDist, mortalDmgDist map[int]float64,
-	maxHP, totalModels int,
-) map[int]float64 {
-	maxPossible := totalModels * maxHP
-	states := make([]float64, maxPossible+1)
-	states[maxPossible] = 1.0
-
-	// Apply normal unsaved (FNP already accounted in dist, no spill)
-	for i := 0; i < nNorm; i++ {
-		states = applyWoundsLinear(states, normDmgDist, maxHP, false) // no spill
-	}
-	// Apply devastating (ignore FNP, no spill)
-	for i := 0; i < nMortal; i++ {
-		states = applyWoundsLinear(states, mortalDmgDist, maxHP, false) // IMPORTANT: false = no spill
-	}
-
-	final := make(map[int]float64)
-	for remaining, prob := range states {
-		if prob < 1e-12 {
-			continue
-		}
-		modelsLeft := (remaining + maxHP - 1) / maxHP
-		killed := totalModels - modelsLeft
-		final[killed] += prob
-	}
-	return final
-}
-
-// applyWounds is the core state-transition engine.
-// It iterates through every possible HP state and applies a single attack's damage distribution.
-func applyWoundsLinear(states []float64, dmgDist map[int]float64, maxHP int, spills bool) []float64 {
-	next := make([]float64, len(states))
+// applyWoundsLinear is the core state-transition engine.
+func applyWoundsLinear(next, states []float64, dmgDist map[int]float64, maxHP int, spills bool) {
+	// 'next' must be zeroed by the caller before passing in.
 
 	for currentWounds, stateProb := range states {
-		if stateProb <= 0 {
+		if stateProb <= 1e-15 { // Efficiency: Skip negligible probabilities
 			continue
 		}
 		if currentWounds == 0 { // Unit already dead
@@ -441,7 +391,6 @@ func applyWoundsLinear(states []float64, dmgDist map[int]float64, maxHP int, spi
 			next[newWounds] += p
 		}
 	}
-	return next
 }
 
 // formatResponse calculates final averages and builds the structured response for the client.
@@ -500,6 +449,56 @@ func precomputeBinomials(maxN int, p float64) [][]float64 {
 		current = newCurrent
 	}
 	return res
+}
+
+func resolveDamageToSlice(
+	nNorm, nMortal int,
+	normDmgDist, mortalDmgDist map[int]float64,
+	maxHP, totalModels int,
+	dest []float64,
+	weight float64,
+) {
+	maxPossible := totalModels * maxHP
+
+	// Buffers for ping-ponging.
+	// To reach Zero-Alloc, these should be moved to a sync.Pool.
+	buf1 := make([]float64, maxPossible+1)
+	buf2 := make([]float64, maxPossible+1)
+
+	states := buf1
+	states[maxPossible] = 1.0
+	next := buf2
+
+	// 1. Normal Hits Loop
+	for i := 0; i < nNorm; i++ {
+		// Zero the scratchpad
+		for j := range next {
+			next[j] = 0
+		}
+		// In-place mutation
+		applyWoundsLinear(next, states, normDmgDist, maxHP, false)
+		// Swap
+		states, next = next, states
+	}
+
+	// 2. Devastating Wounds Loop (spills = true)
+	for i := 0; i < nMortal; i++ {
+		for j := range next {
+			next[j] = 0
+		}
+		applyWoundsLinear(next, states, mortalDmgDist, maxHP, false)
+		states, next = next, states
+	}
+
+	// 3. Accumulate weighted results directly into the destination
+	for remaining, prob := range states {
+		if prob < 1e-15 {
+			continue
+		}
+		modelsLeft := (remaining + maxHP - 1) / maxHP
+		killed := totalModels - modelsLeft
+		dest[killed] += prob * weight
+	}
 }
 
 // Dense 2D probability mass for joint hit outcomes
