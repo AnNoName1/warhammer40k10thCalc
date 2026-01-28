@@ -218,6 +218,61 @@ func TestCalculateDamageCore_SustainedHitsCorrelation(t *testing.T) {
 	}
 }
 
+func TestCalculateDamageCore_Blast_Sanitization(t *testing.T) {
+	// Scenario: 1 Attack Base, Target Count 5. Blast adds +1 Attack.
+	// Total Expected: 2 Attacks.
+	// If Sanitizer mutates + Core applies: 3 Attacks.
+
+	tt := struct {
+		name            string
+		req             CombatSimulationRequest
+		expectedAvgHits float64
+	}{
+		name: "Blast Sanitization Check: 1 Attack + Blast vs 5 Models",
+		req: CombatSimulationRequest{
+			Attacker: AttackerProfile{
+				Count:    1,
+				Attacks:  DiceRoll{Modifier: 1}, // Fixed 1 attack
+				BS:       2,                     // 2+ to hit
+				Strength: 4,
+				AP:       0,
+				Damage:   DiceRoll{Modifier: 1},
+				Blast:    true, // The variable under test
+			},
+			Target: TargetProfile{
+				Count:          intPtr(5), // Triggers +1 Bonus
+				Toughness:      3,
+				Save:           6,
+				WoundsPerModel: 1,
+			},
+		},
+		// Logic:
+		// Base Attacks: 1
+		// Blast Bonus: floor(5/5) = 1
+		// Total Attacks: 2
+		// Hit Chance (BS 2+): 5/6
+		// Expected Avg Hits: 2 * (5/6) = 1.666...
+		expectedAvgHits: 2.0 * (5.0 / 6.0),
+	}
+
+	t.Run(tt.name, func(t *testing.T) {
+		calc := &DamageCalculatorImpl{}
+
+		// 1. Explicitly run Sanitize first to ensure the bug is caught
+		if err := calc.Sanitize(&tt.req); err != nil {
+			t.Fatalf("Sanitize failed: %v", err)
+		}
+
+		// 2. Run Core
+		resp, err := calc.CalculateDamageCore(tt.req)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		verifyValue(t, "AverageHits", resp.AverageHits, tt.expectedAvgHits)
+	})
+}
+
 // verifyValue Checks float equality within epsilon
 func verifyValue(t *testing.T, label string, got, want float64) {
 	if math.Abs(got-want) > epsilonCore {

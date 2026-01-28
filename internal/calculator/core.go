@@ -720,10 +720,14 @@ func (d *DamageCalculatorImpl) Sanitize(req *CombatSimulationRequest) error {
 	// If Blast is on, the target count actually INCREASES the number of attacks.
 	if req.Attacker.Blast {
 		bonus := effectiveTargetCount / 5
-		// Update the actual domain object so the calculator sees it
-		req.Attacker.Attacks.Modifier += bonus
-		// Recalculate maxAttacks for the complexity score
-		maxAttacks = GetMaxFromDice(req.Attacker.Attacks) * req.Attacker.Count
+
+		// Create a temporary dice roll struct to calculate the ceiling
+		// without altering the actual request passed to the core.
+		tempAttacks := req.Attacker.Attacks
+		tempAttacks.Modifier += bonus
+
+		// Recalculate maxAttacks using the temporary state
+		maxAttacks = GetMaxFromDice(tempAttacks) * req.Attacker.Count
 	}
 
 	// 8. Calculate Final Complexity Score
