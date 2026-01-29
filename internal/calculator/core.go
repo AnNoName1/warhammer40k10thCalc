@@ -24,14 +24,12 @@ import (
 	"fmt"
 )
 
-// UnitState tracks the health of the defending unit during sequential damage allocation.
-// This is the "State" in our Markov Chain, representing a snapshot of unit health.
-type UnitState struct {
-	Killed    int // Number of models completely removed from the unit
-	CurrentHP int // Remaining HP of the specific model currently taking damage
-}
+// Validator defines the contract for complexity/safety checks.
+type Validator func(*CombatSimulationRequest) error
 
-type DamageCalculatorImpl struct{}
+type DamageCalculatorImpl struct {
+	Validator Validator
+}
 
 // CalculateDamageCore is the main entry point for the probability engine.
 // It uses a "Transition Map" algorithm: instead of simulating dice rolls, it
@@ -41,7 +39,16 @@ type DamageCalculatorImpl struct{}
 // Returns a vector where index i is the probability of exactly i successes.
 
 func (d *DamageCalculatorImpl) CalculateDamageCore(req CombatSimulationRequest) (SimulationResult, error) {
-	if err := d.Sanitize(&req); err != nil {
+	// 1. Hydrate (Mutate/Normalize State) - ALWAYS runs
+	d.Hydrate(&req)
+
+	// 2. Validate (Check Constraints) - Runs default unless overridden
+	validate := d.Validator
+	if validate == nil {
+		validate = DefaultComplexityValidator
+	}
+
+	if err := validate(&req); err != nil {
 		return SimulationResult{}, err
 	}
 
@@ -481,7 +488,7 @@ func resolveDamageToSlice(
 		states, next = next, states
 	}
 
-	// 2. Devastating Wounds Loop (spills = true)
+	// 2. Devastating Wounds Loop (spills = false by new rules)
 	for i := 0; i < nMortal; i++ {
 		for j := range next {
 			next[j] = 0
@@ -658,90 +665,121 @@ func GetMaxFromDice(d DiceRoll) int {
 	return max
 }
 
-func (d *DamageCalculatorImpl) Sanitize(req *CombatSimulationRequest) error {
-	// 1. Critical Thresholds (0 is uninitialized/impossible, treat as 6)
-	if req.Settings.CriticalHitThreshold < 2 || req.Settings.CriticalHitThreshold > 6 {
-		req.Settings.CriticalHitThreshold = 6
-	}
-	if req.Settings.CriticalWoundThreshold < 2 || req.Settings.CriticalWoundThreshold > 6 {
-		req.Settings.CriticalWoundThreshold = 6
-	}
+// Hydrate enforces data integrity and defaults.
+// It guarantees the Core logic receives valid ranges (2-6) and initialized pointers.
+func (d *DamageCalculatorImpl) Hydrate(req *CombatSimulationRequest) {
+	// 1. Critical Thresholds
+	// If 0 (uninitialized), default to 6. Otherwise, clamp to valid D6 range [2, 6].
+	req.Settings.CriticalHitThreshold = fixThreshold(req.Settings.CriticalHitThreshold)
+	req.Settings.CriticalWoundThreshold = fixThreshold(req.Settings.CriticalWoundThreshold)
 
-	// 2. Ballistic Skill (Minimum 2+ per core rules, rolls of 1 always fail)
+	// 2. Ballistic Skill (Clamping [2, 6])
 	if !req.Attacker.Torrent {
-		if req.Attacker.BS < 2 {
-			req.Attacker.BS = 2
-		} else if req.Attacker.BS > 6 {
-			req.Attacker.BS = 6
-		}
+		req.Attacker.BS = clamp(req.Attacker.BS, 2, 6)
 	}
 
-	// 3. Save Floor (1+ saves are treated as 2+; natural 1 always fails)
+	// 3. Save Floor (Min 2+)
 	if req.Target.Save < 2 {
 		req.Target.Save = 2
 	}
 
-	// 4. Pointer-based defaults (if present)
-	if req.Target.Invulnerable != nil && (*req.Target.Invulnerable < 2) {
-		*req.Target.Invulnerable = 2
+	// 4. Invulnerable Save (Pointer logic)
+	if req.Target.Invulnerable != nil && *req.Target.Invulnerable < 2 {
+		val := 2
+		req.Target.Invulnerable = &val
 	}
 
-	// 5. Get the "Ceiling" of the attack sequence
-	maxAttacks := GetMaxFromDice(req.Attacker.Attacks) * req.Attacker.Count
-	maxDamage := GetMaxFromDice(req.Attacker.Damage)
-
-	devastatingDoSpillover := false
-
-	// 6. Resolve the Target Count (Business Logic for "Infinite")
-	var effectiveTargetCount int
-
+	// 5. Infinite Logic / Target Count Resolution
 	if req.Target.Count == nil {
-		// "Infinite" logic: Determine how many models can actually be affected.
+		// Calculate the ceiling for target resolution
+		maxAttacks := GetMaxFromDice(req.Attacker.Attacks) * req.Attacker.Count
+		maxDamage := GetMaxFromDice(req.Attacker.Damage)
+
+		// Hardcoded false in original; assuming intended as a logic toggle
+		devastatingDoSpillover := false
+
+		var count int
 		if req.Attacker.DevastatingWounds && devastatingDoSpillover {
-			// Spillover: Total pool of damage matters.
 			totalPossibleDamage := maxAttacks * maxDamage
-			effectiveTargetCount = (totalPossibleDamage / req.Target.WoundsPerModel) + 1
+			count = (totalPossibleDamage / req.Target.WoundsPerModel) + 1
 		} else {
-			// No spillover: Cannot kill more models than there are attacks.
-			effectiveTargetCount = maxAttacks
+			count = maxAttacks
 		}
 
-		// Safety cap to prevent DOS (Business constraint).
-		if effectiveTargetCount > 200 {
-			effectiveTargetCount = 200
+		// Enforce DOS cap
+		if count > 200 {
+			count = 200
 		}
-		// Go's escape analysis will move effectiveTargetCount to the heap.
-		req.Target.Count = &effectiveTargetCount
-	} else {
-		effectiveTargetCount = *req.Target.Count
+		req.Target.Count = &count
 	}
+}
 
-	// 7. Blast Correction (Feedback Loop)
-	// If Blast is on, the target count actually INCREASES the number of attacks.
+// DefaultComplexityValidator implements the stress-test logic.
+// It is read-only and calculates the computational cost.
+func DefaultComplexityValidator(req *CombatSimulationRequest) error {
+	const Threshold = 8_000_000
+
+	// 1. maxAttacks
+	baseAttacksPerModel := GetMaxFromDice(req.Attacker.Attacks)
+
+	blastBonusPerModel := 0
 	if req.Attacker.Blast {
-		bonus := effectiveTargetCount / 5
-
-		// Create a temporary dice roll struct to calculate the ceiling
-		// without altering the actual request passed to the core.
-		tempAttacks := req.Attacker.Attacks
-		tempAttacks.Modifier += bonus
-
-		// Recalculate maxAttacks using the temporary state
-		maxAttacks = GetMaxFromDice(tempAttacks) * req.Attacker.Count
+		blastBonusPerModel = *req.Target.Count / 5
 	}
 
-	// 8. Calculate Final Complexity Score
-	// State Space = Width (Models * HP). MaxAttacks = Depth.
-	stateSpace := effectiveTargetCount * req.Target.WoundsPerModel
-	// If each attack requires iterating over the state space:
-	score := maxAttacks * (stateSpace * stateSpace) // Or a lower multiplier like * 10
+	maxAttacks :=
+		req.Attacker.Count *
+			(baseAttacksPerModel + blastBonusPerModel)
+	targetCount := 0
+	if req.Target.Count != nil {
+		targetCount = *req.Target.Count
+	}
+	if req.Attacker.Blast {
+		maxAttacks += targetCount / 5
+	}
 
-	// 9. The Threshold Check
-	const Threshold = 25_000_000
+	// 2. stateSpace
+	stateSpace := targetCount * req.Target.WoundsPerModel
+
+	// 3. hit upper bound
+	maxHitsPerAttack := 1 + req.Attacker.SustainedHits
+	maxHits := maxAttacks * maxHitsPerAttack
+
+	// 4. score
+	logA := 0
+	for a := maxAttacks; a > 1; a >>= 1 {
+		logA++
+	}
+
+	score :=
+		logA*maxHits*maxHits +
+			maxHits*maxHits +
+			4*maxHits*stateSpace
+
 	if score > Threshold {
-		return fmt.Errorf("simulation complexity %d exceeds limit %d. (Targeting ~%d models with ~%d max attacks)",
-			score, Threshold, effectiveTargetCount, maxAttacks)
+		return fmt.Errorf(
+			"complexity overflow: score=%d > %d (A=%d H=%d S=%d)",
+			score, Threshold, maxAttacks, maxHits, stateSpace,
+		)
 	}
-
 	return nil
+}
+
+// clamp helper for hydration efficiency
+func clamp(val, min, max int) int {
+	if val < min {
+		return min
+	}
+	if val > max {
+		return max
+	}
+	return val
+}
+
+// fixThreshold handles the 0 -> 6 default before clamping
+func fixThreshold(val int) int {
+	if val == 0 {
+		return 6
+	}
+	return clamp(val, 2, 6)
 }
