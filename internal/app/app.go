@@ -39,6 +39,10 @@ import (
 func Run() error {
 	mux := http.NewServeMux()
 
+	mux.HandleFunc("/alive", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
 	calcCore := &calculator.DamageCalculatorImpl{}
 
 	mux.HandleFunc("/api/damage/calculate", handler.CalculateDamageHandler(calcCore))
