@@ -34,27 +34,6 @@ curl -X POST http://localhost:8080/api/damage/calculate \
     "target_wounds_per_model": 2
 }'
 
-pprof profiling:
-terminal 1:
-go tool pprof http://localhost:8080/debug/pprof/profile?seconds=30
-terminal 2(Bash script for pprof testing:):
-for i in {1..500}; do
-  curl -s -X POST http://localhost:8080/api/damage/calculate \
-  -H "Content-Type: application/json" \
-  -d '{
-      "num_models": 5,
-      "attacks_string": "2",
-      "bs": 3,
-      "s": 4,
-      "ap": 1,
-      "d": "1",
-      "t": 4,
-      "save": 3,
-      "hit_reroll": "none",
-      "wound_reroll": "none",
-      "target_wounds_per_model": 2
-  }' > /dev/null
-
 ---
 
 # Warhammer 40k 10th Edition Calculator (Server)
