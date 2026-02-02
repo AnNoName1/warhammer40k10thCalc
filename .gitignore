@@ -20,3 +20,5 @@
 .vscode
 
 vendor/
+
+.env

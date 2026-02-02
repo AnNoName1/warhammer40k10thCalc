@@ -24,6 +24,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 
 	httpSwagger "github.com/swaggo/http-swagger"
 
@@ -50,10 +51,13 @@ func Run() error {
 	// This serves the documentation at /swagger/index.html
 	mux.Handle("/swagger/", httpSwagger.WrapHandler)
 
-	// Wrap the mux with middleware
+	origins := parseOrigins(os.Getenv("CORS_ALLOWED_ORIGINS"))
 
-	handler := middleware.RecoverMiddleware(
-		middleware.LoggingMiddleware(mux),
+	// Wrap the mux with middleware
+	handler := middleware.CORSMiddleware(origins)(
+		middleware.RecoverMiddleware(
+			middleware.LoggingMiddleware(mux),
+		),
 	)
 
 	port := os.Getenv("PORT")
@@ -65,4 +69,15 @@ func Run() error {
 	log.Printf("Swagger UI available at http://localhost:%s/swagger/index.html\n", port)
 	// Start the server with middleware-wrapped handler
 	return http.ListenAndServe(":"+port, handler)
+}
+
+func parseOrigins(env string) map[string]bool {
+	m := make(map[string]bool)
+	for _, o := range strings.Split(env, ",") {
+		o = strings.TrimSpace(o)
+		if o != "" {
+			m[o] = true
+		}
+	}
+	return m
 }
