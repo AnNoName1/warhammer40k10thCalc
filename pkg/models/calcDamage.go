@@ -258,7 +258,7 @@ func (req *DamageRequestDTO) ToDomain() (calculator.CombatSimulationRequest, err
 	return model, nil
 }
 
-//now for response
+//for response
 
 type DamageResponseDTO struct {
 	// Grouped or flattened as you prefer, but separate from the core
@@ -278,6 +278,7 @@ type DistributionsDTO struct {
 	Hits      map[int]float64 `json:"hits"`
 	Wounds    map[int]float64 `json:"wounds"`
 	Saves     map[int]float64 `json:"saves_failed"`
+	Damage    map[int]float64 `json:"damage"`
 	Destroyed map[int]float64 `json:"models_destroyed"`
 }
 
@@ -291,6 +292,7 @@ func MapResultToResponse(res calculator.SimulationResult, uuid string) DamageRes
 			Hits:      res.HitDist,
 			Wounds:    res.WoundDist,
 			Saves:     res.PenDist,
+			Damage:    res.DamageDist,
 			Destroyed: res.DestroyedDist,
 		},
 		Message:     "Calculation successful",
