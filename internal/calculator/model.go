@@ -109,8 +109,9 @@ func (r *RerollType) UnmarshalJSON(b []byte) error {
 type SimulationResult struct {
 	AverageHits      float64
 	AverageDestroyed float64
-	HitDist       map[int]float64
-	WoundDist     map[int]float64
-	PenDist       map[int]float64 // Armor saves failed
-	DestroyedDist map[int]float64
+	HitDist          map[int]float64
+	WoundDist        map[int]float64
+	PenDist          map[int]float64 // Armor saves failed
+	DamageDist       map[int]float64 // Total damage after failed saves + FNP
+	DestroyedDist    map[int]float64
 }

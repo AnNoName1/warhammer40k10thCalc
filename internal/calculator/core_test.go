@@ -15,6 +15,7 @@ func TestCalculateDamageCore_Basic(t *testing.T) {
 		expectedAvgDestroyed float64
 		expectedHitsDist     map[int]float64
 		expectedKilledDist   map[int]float64
+		expectedDamageDist   map[int]float64 // New field
 	}{
 		{
 			name: "1 Attack, BS4+, S5 vs T3, Save 6+",
@@ -44,6 +45,11 @@ func TestCalculateDamageCore_Basic(t *testing.T) {
 				0: 13.0 / 18.0,
 				1: 5.0 / 18.0,
 			},
+			// In this scenario, Total Damage equals Killed Models
+			expectedDamageDist: map[int]float64{
+				0: 13.0 / 18.0,
+				1: 5.0 / 18.0,
+			},
 		},
 	}
 
@@ -60,6 +66,8 @@ func TestCalculateDamageCore_Basic(t *testing.T) {
 
 			verifyDist(t, "HitDist", resp.HitDist, tt.expectedHitsDist)
 			verifyDist(t, "DestroyedDist", resp.DestroyedDist, tt.expectedKilledDist)
+			// Verify new distribution
+			verifyDist(t, "DamageDist", resp.DamageDist, tt.expectedDamageDist)
 		})
 	}
 }

@@ -291,6 +291,14 @@ func (d *DamageCalculatorImpl) CalculateDamageCore(req CombatSimulationRequest) 
 	dmgNoFnp := _calculateDamageDistribution(req.Attacker.Damage, req.Target.FeelNoPain)   // FNP for devastating - latest rules
 	finalKilledSlice := make([]float64, *req.Target.Count+1)
 
+	// NEW: Total Damage Accumulators
+	maxD := GetMaxFromDice(req.Attacker.Damage)
+	totalDamageVec := make([]float64, maxHits*maxD+1)
+	// Pre-calculate convolutions for each possible total hit count [0...maxHits]
+	// damageConvs[hits][damage]
+	damageConvs := make([][]float64, maxHits+1)
+	damageConvs[0] = []float64{1.0}
+
 	for nw := 0; nw <= maxHits; nw++ {
 		row := jointNormalBeforeSave_Dev[nw]
 		for dw := 0; dw <= maxHits; dw++ {
@@ -305,8 +313,6 @@ func (d *DamageCalculatorImpl) CalculateDamageCore(req CombatSimulationRequest) 
 				if weight < 1e-15 {
 					continue
 				}
-
-				// MODIFIED: Pass finalKilledSlice directly to accumulate results
 				resolveDamageToSlice(
 					u, dw,
 					dmgWithFnp, dmgNoFnp,
@@ -315,6 +321,24 @@ func (d *DamageCalculatorImpl) CalculateDamageCore(req CombatSimulationRequest) 
 					finalKilledSlice,
 					weight,
 				)
+				// 2. New Logic: Total Damage Distribution
+				totalUnsaved := u + dw
+				// Lazily compute convolution only when needed
+				if damageConvs[totalUnsaved] == nil {
+					prev := damageConvs[totalUnsaved-1]
+					curr := make([]float64, len(prev)+maxD)
+					for i, pPrev := range prev {
+						for dVal, pD := range dmgNoFnp {
+							curr[i+dVal] += pPrev * pD
+						}
+					}
+					damageConvs[totalUnsaved] = curr
+				}
+
+				// Accumulate directly into result
+				for d, pD := range damageConvs[totalUnsaved] {
+					totalDamageVec[d] += pD * weight
+				}
 			}
 		}
 	}
@@ -323,6 +347,7 @@ func (d *DamageCalculatorImpl) CalculateDamageCore(req CombatSimulationRequest) 
 		vectorToMap(finalHitsDist),
 		vectorToMap(totalWoundsDist),
 		vectorToMap(finalUnsavedDist),
+		vectorToMap(totalDamageVec),
 		vectorToMap(finalKilledSlice),
 	), nil
 }
@@ -401,7 +426,7 @@ func applyWoundsLinear(next, states []float64, dmgDist map[int]float64, maxHP in
 }
 
 // formatResponse calculates final averages and builds the structured response for the client.
-func formatResponse(hits, wounds, pens, killed map[int]float64) SimulationResult {
+func formatResponse(hits, wounds, pens, damage, killed map[int]float64) SimulationResult {
 	avgK := 0.0
 	for k, v := range killed {
 		avgK += float64(k) * v
@@ -418,6 +443,7 @@ func formatResponse(hits, wounds, pens, killed map[int]float64) SimulationResult
 		HitDist:          hits,
 		WoundDist:        wounds,
 		PenDist:          pens,
+		DamageDist:       damage,
 		DestroyedDist:    killed,
 	}
 }
