@@ -320,6 +320,109 @@ func verifyDist(t *testing.T, label string, got, want map[int]float64) {
 	}
 }
 
+func TestCalculateDamageCore_Torrent(t *testing.T) {
+	tests := []struct {
+		name                 string
+		req                  CombatSimulationRequest
+		expectedAvgHits      float64
+		expectedAvgDestroyed float64
+		expectedHitsDist     map[int]float64
+		expectedKilledDist   map[int]float64
+		expectedDamageDist   map[int]float64
+	}{
+		{
+			name: "Torrent: 1 Attack, BS irrelevant (set to 6+), S4 vs T4, Save 6+",
+			req: CombatSimulationRequest{
+				Attacker: AttackerProfile{
+					Count:    1,
+					Attacks:  DiceRoll{Modifier: 1},
+					BS:       6,
+					Strength: 4,
+					AP:       0,
+					Damage:   DiceRoll{Modifier: 1},
+					Torrent:  true,
+				},
+				Target: TargetProfile{
+					Count:          intPtr(1),
+					Toughness:      4,
+					Save:           6,
+					WoundsPerModel: 1,
+				},
+			},
+			expectedAvgHits:      1.0,
+			expectedAvgDestroyed: 5.0 / 12.0,
+			expectedHitsDist: map[int]float64{
+				0: 0.0,
+				1: 1.0,
+			},
+			expectedKilledDist: map[int]float64{
+				0: 7.0 / 12.0,
+				1: 5.0 / 12.0,
+			},
+			expectedDamageDist: map[int]float64{
+				0: 7.0 / 12.0,
+				1: 5.0 / 12.0,
+			},
+		},
+		{
+			name: "Torrent: Multiple Attacks (D6), S3 vs T3, Save 5+",
+			req: CombatSimulationRequest{
+				Attacker: AttackerProfile{
+					Count:    1,
+					Attacks:  DiceRoll{Count: 1, Sides: 6},
+					BS:       2,
+					Strength: 3,
+					AP:       0,
+					Damage:   DiceRoll{Modifier: 1},
+					Torrent:  true,
+				},
+				Target: TargetProfile{
+					Count:          intPtr(10),
+					Toughness:      3,
+					Save:           5,
+					WoundsPerModel: 1,
+				},
+			},
+			expectedAvgHits:      3.5,
+			expectedAvgDestroyed: 3.5 / 3.0,
+			expectedHitsDist: map[int]float64{
+				1: 1.0 / 6.0,
+				2: 1.0 / 6.0,
+				3: 1.0 / 6.0,
+				4: 1.0 / 6.0,
+				5: 1.0 / 6.0,
+				6: 1.0 / 6.0,
+			},
+			// Killed/Damage distributions for D6 attacks require
+			// binomial expansion or iterative convolution.
+			// Provided Avg is the primary test vector.
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			calc := &DamageCalculatorImpl{}
+			resp, err := calc.CalculateDamageCore(tt.req)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			verifyValue(t, "AverageHits", resp.AverageHits, tt.expectedAvgHits)
+			verifyValue(t, "AverageDestroyed", resp.AverageDestroyed, tt.expectedAvgDestroyed)
+
+			if tt.expectedHitsDist != nil {
+				verifyDist(t, "HitDist", resp.HitDist, tt.expectedHitsDist)
+			}
+			if tt.expectedKilledDist != nil {
+                verifyDist(t, "DestroyedDist", resp.DestroyedDist, tt.expectedKilledDist)
+            }
+            if tt.expectedDamageDist != nil { 
+                verifyDist(t, "DamageDist", resp.DamageDist, tt.expectedDamageDist)
+            }
+        })
+    } 
+}
+
 func intPtr(i int) *int {
 	return &i
 }
