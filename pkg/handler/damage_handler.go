@@ -42,10 +42,11 @@ type DamageCalculator interface {
 //	@Tags			damage
 //	@Accept			json
 //	@Produce		json
-//	@Param			X-Request-ID	header		string						false	"Request UUID"		// Optional custom header for request tracking
-//	@Param			request			body		damagerequest.DamageRequest	true	"Calculation Parameters" // The main request body containing all input stats
-//	@Success		200				{object}	damagerequest.DamageResponse	// Returns the calculated damage results
-//	@Router			/damage/calculate [post]		// Route to calculate damage (POST request)
+//	@Param			X-Request-ID	header		string							false	"Request UUID"
+//	@Param			request			body		damagerequest.DamageRequestDTO	true	"Calculation Parameters"
+//	@Success		200				{object}	damagerequest.DamageResponseDTO
+//	@Failure		400				{object}	map[string]string	"Invalid input payload"
+//	@Router			/damage/calculate [post]
 func CalculateDamageHandler(calculator DamageCalculator) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Check if the HTTP method is POST. If not, return a 405 (Method Not Allowed).
