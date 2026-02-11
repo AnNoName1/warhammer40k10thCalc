@@ -24,3 +24,24 @@ repos:
         entry: bash ./scripts/validate-commit-msg.sh
         language: system
         stages: [commit-msg]
+
+      - id: add-license
+        name: Add License Headers
+        entry: addlicense -c "Olbutov Aleksandr" -l mit -ignore **/docs/** .
+        language: system
+        stages: [pre-push]
+        pass_filenames: false
+
+      - id: swag-fmt
+        name: Swag Format
+        entry: swag fmt
+        language: system
+        stages: [pre-push]
+        pass_filenames: false
+
+      - id: swag-init
+        name: Swag Init
+        entry: swag init -g cmd/WarhammerCalcServer/main.go
+        language: system
+        stages: [pre-push]
+        pass_filenames: false
