@@ -139,6 +139,19 @@ info:
   title: Warhammer 40k 10th Calc API
   version: "1.0"
 paths:
+  /alive:
+    get:
+      description: Confirm the server is up and responding.
+      produces:
+      - text/plain
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: string
+      summary: Health Check
+      tags:
+      - System
   /damage/calculate:
     post:
       consumes:

@@ -35,14 +35,23 @@ import (
 	handler "github.com/AnNoName1/warhammer40k10thCalc/pkg/handler"
 )
 
+// HealthCheck godoc
+//
+//	@Summary		Health Check
+//	@Description	Confirm the server is up and responding.
+//	@Tags			System
+//	@Produce		plain
+//	@Success		200	{string}	string	"OK"
+//	@Router			/alive [get]
+func HealthCheck(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK)
+}
+
 // Run initializes the application and starts the HTTP server.
-// It returns an error if the server fails to start or encounters an issue.
 func Run() error {
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("/alive", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
+	mux.HandleFunc("/alive", HealthCheck)
 
 	calcCore := &calculator.DamageCalculatorImpl{}
 
