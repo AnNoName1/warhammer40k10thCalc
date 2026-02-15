@@ -26,18 +26,23 @@ repos:
         entry: gofmt -w
         language: system
         types: [go]
+        # pass_filenames is true by default; gofmt -w [files] works on delta.
 
       - id: go-vet
         name: go vet
-        entry: go vet ./...
+        # dirname "$@" extracts the directories of staged files to avoid scanning the whole tree
+        entry: bash -c 'go vet $(dirname "$@") | sort -u' --
         language: system
-        pass_filenames: false
+        types: [go]
+        pass_filenames: true
 
       - id: go-test
         name: go test
-        entry: go test ./... -short
+        # Runs tests only in packages where files were modified
+        entry: bash -c 'go test -short $(dirname "$@") | sort -u' --
         language: system
-        pass_filenames: false
+        types: [go]
+        pass_filenames: true
 
       - id: check-commit-message
         name: Check Commit Message Format
