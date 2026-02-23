@@ -32,7 +32,9 @@ func TestLoggingMiddleware_GeneratesAndPropagatesRequestID(t *testing.T) {
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if v := r.Context().Value(RequestIDKey); v != nil {
 			if s, ok := v.(string); ok {
-				w.Write([]byte(s))
+				if _, err := w.Write([]byte(s)); err != nil {
+					t.Fatalf("write failed: %v", err)
+				}
 				return
 			}
 		}
@@ -47,7 +49,11 @@ func TestLoggingMiddleware_GeneratesAndPropagatesRequestID(t *testing.T) {
 	h.ServeHTTP(rr, req)
 
 	res := rr.Result()
-	defer res.Body.Close()
+	defer func() { //close body
+		if err := res.Body.Close(); err != nil {
+			t.Fatalf("failed to close body: %v", err)
+		}
+	}()
 
 	// header must contain X-Request-ID
 	id := res.Header.Get("X-Request-ID")
@@ -66,7 +72,9 @@ func TestLoggingMiddleware_PreservesClientRequestID(t *testing.T) {
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if v := r.Context().Value(RequestIDKey); v != nil {
 			if s, ok := v.(string); ok {
-				w.Write([]byte(s))
+				if _, err := w.Write([]byte(s)); err != nil {
+					t.Fatalf("write failed: %v", err)
+				}
 				return
 			}
 		}
@@ -83,7 +91,11 @@ func TestLoggingMiddleware_PreservesClientRequestID(t *testing.T) {
 	h.ServeHTTP(rr, req)
 
 	res := rr.Result()
-	defer res.Body.Close()
+	defer func() { //close body
+		if err := res.Body.Close(); err != nil {
+			t.Fatalf("failed to close body: %v", err)
+		}
+	}()
 
 	id := res.Header.Get("X-Request-ID")
 	if id != clientID {

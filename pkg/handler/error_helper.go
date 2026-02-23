@@ -22,6 +22,7 @@ package handler
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 )
 
@@ -41,5 +42,7 @@ func SendError(w http.ResponseWriter, reqID string, message string, code int) {
 		RequestUUID: reqID,
 	}
 
-	json.NewEncoder(w).Encode(errResp)
+	if err := json.NewEncoder(w).Encode(errResp); err != nil {
+		log.Printf("failed to encode error: %v", err)
+	}
 }
