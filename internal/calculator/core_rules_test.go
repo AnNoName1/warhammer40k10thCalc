@@ -104,7 +104,7 @@ func getCDF(dist map[int]float64, t *testing.T) map[int]float64 {
 	runningSum := 0.0
 	// Iterate through possible damage values (0 to max)
 	for i := 0; i <= maxD; i++ {
-		p, _ := dist[i] // If key missing, p is 0
+		p := dist[i] // If key missing, p is 0
 		runningSum += p
 		cdf[i] = runningSum
 	}
@@ -575,7 +575,7 @@ func TestP05_ParameterMonotonicity(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				var prevDestroyed float64 = math.Inf(1)
+				prevDestroyed := math.Inf(1)
 
 				for _, val := range tt.values {
 					req := generateBaseRequest()

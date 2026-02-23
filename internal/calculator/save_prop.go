@@ -90,10 +90,11 @@ func CalculateFailedSaveProbability(ap int, save int, invulnerable *int, saveMod
 	failChance := 1.0 - passChance
 
 	// 6. Handle Rerolls
-	if saveReroll == RerollOnes {
+	switch saveReroll {
+	case RerollOnes:
 		// If we roll a 1 (1/6), we retry and get another passChance
 		failChance -= oneSixth * passChance
-	} else if saveReroll == RerollFail {
+	case RerollFail:
 		// If we fail (failChance), we retry and get another passChance
 		failChance -= failChance * passChance
 	}

@@ -79,12 +79,13 @@ func CalculateWoundProbability(s int, t int, rerollType RerollType, woundModifie
 	missChance := 1.0 - woundChance
 
 	// 4. Process Rerolls
-	if rerollType == RerollOnes {
-		// Rerolling a 1 gives a 1/6 chance to hit the "new" woundChance
-		// and a 1/6 chance to hit the "new" critChance
+	switch rerollType {
+	case RerollOnes:
+		// Rerolling a 1 (1/6) gives another chance to hit wound or crit
 		woundChance += oneSixth * woundChance
 		critChance += oneSixth * critChance
-	} else if rerollType == RerollFail {
+	case RerollFail:
+		// Rerolling all fails (missChance) gives another chance to hit wound or crit
 		woundChance += missChance * woundChance
 		critChance += missChance * critChance
 	}
