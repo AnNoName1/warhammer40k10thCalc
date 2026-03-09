@@ -1,0 +1,126 @@
+# Copyright (c) 2026 Olbutov Aleksandr
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
+name: MR Quality Gate
+on:
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  analysis:
+    name: Dependency Analysis
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: false
+      - name: Dependency Vulnerability Check
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.1.3 && govulncheck ./...
+      - name: Dependency License Scan
+        run: go install github.com/google/go-licenses@v1.6.0 && go-licenses check ./...
+
+  linting-and-spec:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: false
+
+      - name: Install tools
+        run: |
+          go install github.com/swaggo/swag/cmd/swag@v1.16.4
+
+      - name: Generate OpenAPI
+        run: swag init -g cmd/WarhammerCalcServer/main.go -o ./spec
+
+      - name: Swagger Lint (Σ)
+        run: |
+          npm install -g @redocly/cli
+          redocly lint spec/swagger.yaml
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.64
+          args: --new-from-rev=${{ github.event.pull_request.base.sha || github.event.before }}
+
+      - name: Upload OpenAPI artifact
+        if: ${{ !env.ACT }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: openapi-spec
+          path: spec/swagger.yaml
+
+  api-diff:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: false
+
+      - name: Install tools
+        run: |
+          go install github.com/swaggo/swag/cmd/swag@v1.16.4
+          go install github.com/tufin/oasdiff@v1.9.2
+
+      - name: Generate current spec
+        run: swag init -g cmd/WarhammerCalcServer/main.go -o ./current
+
+      - name: Generate base spec
+        run: |
+          git checkout ${{ github.event.pull_request.base.sha }}
+          swag init -g cmd/WarhammerCalcServer/main.go -o ./base
+
+      - name: Compare
+        run: oasdiff breaking ./base/swagger.yaml ./current/swagger.yaml
+
+  build-and-test:
+    name: Build & System Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: false
+      - name: Build All
+        run: go build -o /dev/null ./cmd/WarhammerCalcServer/...
+      - name: Full Unit + Integration Tests
+        # Runs full suite as required for MR level
+        run: |
+          go test ./... \
+            -coverprofile=coverage.out \
+            -coverpkg=./internal/...,./pkg/handler/...
+
+          TOTAL=$(go tool cover -func=coverage.out | awk '/total:/ {print substr($3, 1, length($3)-1)}')
+          awk "BEGIN { exit !($TOTAL >= 80) }"
+
