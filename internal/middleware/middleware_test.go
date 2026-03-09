@@ -1,4 +1,4 @@
-// Copyright (c) 2025 Olbutov Aleksandr
+// Copyright (c) 2026 Olbutov Aleksandr
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -17,3 +17,32 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
+
+package middleware
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"testing"
+)
+
+func TestMiddlewareChain_Panic(t *testing.T) {
+	handler := RecoverMiddleware(
+		LoggingMiddleware(
+			http.HandlerFunc(panicHandler),
+		),
+	)
+
+	req := httptest.NewRequest(http.MethodGet, "/panic", nil)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", rec.Code)
+	}
+
+	if got := rec.Header().Get("X-Request-ID"); got == "" {
+		t.Fatal("expected X-Request-ID header to be set")
+	}
+}

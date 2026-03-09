@@ -1,0 +1,130 @@
+# Copyright (c) 2026 Olbutov Aleksandr
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
+name: Remote-Push Guard
+on: [push]
+
+jobs:
+  remote-guard:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate Commit Message Policy
+        run: |
+          set -e
+
+          RANGE="${{ github.event.before }}..${{ github.event.after }}"
+
+          # New branch push
+          if [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
+            RANGE="HEAD^..HEAD"
+          fi
+
+          echo "Checking range: $RANGE"
+
+          git rev-list --no-merges "$RANGE" | while read sha; do
+            git show -s --format=%B "$sha" > .tmp_msg
+            bash ./scripts/validate-commit-msg.sh .tmp_msg
+          done
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - name: Static Analysis (Δ)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          BEFORE="${{ github.event.before }}"
+          AFTER="${{ github.sha }}"
+
+          # Determine diff base safely
+          if [ -z "$BEFORE" ] || \
+            [ "$BEFORE" = "0000000000000000000000000000000000000000" ] || \
+            ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            echo "No valid BEFORE commit. Using merge-base with origin."
+            git fetch --no-tags --depth=1 origin +refs/heads/*:refs/remotes/origin/*
+            BASE=$(git merge-base "$AFTER" origin/$(git rev-parse --abbrev-ref HEAD))
+          else
+            BASE="$BEFORE"
+          fi
+
+          # Collect changed Go files (added, copied, modified, renamed)
+          mapfile -t GO_FILES < <(
+            git diff --name-only --diff-filter=ACMR "$BASE" "$AFTER" \
+              | grep -E '\.go$' || true
+          )
+
+          if [ "${#GO_FILES[@]}" -eq 0 ]; then
+            echo "No Go file changes."
+            exit 0
+          fi
+
+          echo "Changed Go files:"
+          printf '%s\n' "${GO_FILES[@]}"
+
+          echo "Running gofmt..."
+          UNFORMATTED=$(gofmt -l "${GO_FILES[@]}")
+          if [ -n "$UNFORMATTED" ]; then
+            echo "Unformatted files:"
+            echo "$UNFORMATTED"
+            exit 1
+          fi
+
+          echo "Running go vet..."
+          mapfile -t PKGS < <(
+            printf '%s\n' "${GO_FILES[@]}" \
+              | xargs -n1 dirname \
+              | sort -u
+          )
+
+          go vet "${PKGS[@]}"
+
+      - name: Install & Check Licenses
+        run: |
+          go install github.com/google/addlicense@latest
+          addlicense -check -c "Olbutov Aleksandr" -l mit -ignore "**/docs/**" .
+
+  remote-build-test:
+    needs: remote-guard
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - name: Build Tree (Core Guarantee 1)
+        run: go build cmd/WarhammerCalcServer/main.go
+
+      - name: Unit Tests (Core Guarantee 2)
+        run: go test -short -v ./...

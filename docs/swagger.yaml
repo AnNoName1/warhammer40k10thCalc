@@ -1,0 +1,188 @@
+basePath: /api
+definitions:
+  calculator.RerollType:
+    enum:
+    - 0
+    - 1
+    - 2
+    type: integer
+    x-enum-varnames:
+    - RerollNone
+    - RerollOnes
+    - RerollFail
+  damagerequest.AttackerDTO:
+    properties:
+      ap:
+        type: integer
+      attacks_string:
+        type: string
+      blast:
+        description: Weapon Keywords
+        type: boolean
+      bs:
+        type: integer
+      d:
+        type: string
+      devastating_wounds:
+        type: boolean
+      hit_modifier:
+        description: Modifiers (e.g., -1 to hit is -1)
+        type: integer
+      lethal_hits:
+        type: boolean
+      num_models:
+        type: integer
+      s:
+        type: integer
+      sustained_hits:
+        type: integer
+      torrent:
+        type: boolean
+      wound_modifier:
+        type: integer
+    type: object
+  damagerequest.DamageRequestDTO:
+    properties:
+      attacker:
+        $ref: '#/definitions/damagerequest.AttackerDTO'
+      rules:
+        $ref: '#/definitions/damagerequest.RulesDTO'
+      target:
+        $ref: '#/definitions/damagerequest.TargetDTO'
+    type: object
+  damagerequest.DamageResponseDTO:
+    properties:
+      distributions:
+        $ref: '#/definitions/damagerequest.DistributionsDTO'
+      message:
+        type: string
+      request_uuid:
+        type: string
+      summary:
+        allOf:
+        - $ref: '#/definitions/damagerequest.SummaryDTO'
+        description: Grouped or flattened as you prefer, but separate from the core
+    type: object
+  damagerequest.DistributionsDTO:
+    properties:
+      damage:
+        additionalProperties:
+          format: float64
+          type: number
+        type: object
+      hits:
+        additionalProperties:
+          format: float64
+          type: number
+        type: object
+      models_destroyed:
+        additionalProperties:
+          format: float64
+          type: number
+        type: object
+      saves_failed:
+        additionalProperties:
+          format: float64
+          type: number
+        type: object
+      wounds:
+        additionalProperties:
+          format: float64
+          type: number
+        type: object
+    type: object
+  damagerequest.RulesDTO:
+    properties:
+      critical_hit_threshold:
+        description: Thresholds allow for rules like "Critical hits on a 5+"
+        type: integer
+      critical_wound_threshold:
+        type: integer
+      hit_reroll:
+        $ref: '#/definitions/calculator.RerollType'
+      save_modifier:
+        type: integer
+      save_reroll:
+        $ref: '#/definitions/calculator.RerollType'
+      wound_reroll:
+        $ref: '#/definitions/calculator.RerollType'
+    type: object
+  damagerequest.SummaryDTO:
+    properties:
+      average_destroyed:
+        type: number
+      average_hits:
+        type: number
+    type: object
+  damagerequest.TargetDTO:
+    properties:
+      cover:
+        type: boolean
+      feel_no_pain:
+        description: FNP (e.g., 6)
+        type: integer
+      invulnerable:
+        type: integer
+      model_count:
+        type: integer
+      save:
+        type: integer
+      t:
+        type: integer
+      wounds_per_model:
+        type: integer
+    type: object
+host: localhost:8080
+info:
+  contact: {}
+  description: API for calculating damage statistics based on 10th Edition rules.
+  title: Warhammer 40k 10th Calc API
+  version: "1.0"
+paths:
+  /alive:
+    get:
+      description: Confirm the server is up and responding.
+      produces:
+      - text/plain
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: string
+      summary: Health Check
+      tags:
+      - System
+  /damage/calculate:
+    post:
+      consumes:
+      - application/json
+      description: Calculates statistical damage based on input parameters like attack
+        rolls, modifiers, and defense stats.
+      parameters:
+      - description: Request UUID
+        in: header
+        name: X-Request-ID
+        type: string
+      - description: Calculation Parameters
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/damagerequest.DamageRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/damagerequest.DamageResponseDTO'
+        "400":
+          description: Invalid input payload
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Calculate Damage
+      tags:
+      - damage
+swagger: "2.0"

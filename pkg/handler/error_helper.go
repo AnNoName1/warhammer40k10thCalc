@@ -17,3 +17,32 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
+
+package handler
+
+import (
+	"encoding/json"
+	"log"
+	"net/http"
+)
+
+// APIError defines a standardized JSON error response.
+type APIError struct {
+	Message     string `json:"message"`
+	RequestUUID string `json:"request_uuid"`
+}
+
+// SendError sends a standardized JSON error response.
+func SendError(w http.ResponseWriter, reqID string, message string, code int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+
+	errResp := APIError{
+		Message:     message,
+		RequestUUID: reqID,
+	}
+
+	if err := json.NewEncoder(w).Encode(errResp); err != nil {
+		log.Printf("failed to encode error: %v", err)
+	}
+}

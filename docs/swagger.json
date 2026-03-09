@@ -1,0 +1,281 @@
+{
+    "swagger": "2.0",
+    "info": {
+        "description": "API for calculating damage statistics based on 10th Edition rules.",
+        "title": "Warhammer 40k 10th Calc API",
+        "contact": {},
+        "version": "1.0"
+    },
+    "host": "localhost:8080",
+    "basePath": "/api",
+    "paths": {
+        "/alive": {
+            "get": {
+                "description": "Confirm the server is up and responding.",
+                "produces": [
+                    "text/plain"
+                ],
+                "tags": [
+                    "System"
+                ],
+                "summary": "Health Check",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
+        "/damage/calculate": {
+            "post": {
+                "description": "Calculates statistical damage based on input parameters like attack rolls, modifiers, and defense stats.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "damage"
+                ],
+                "summary": "Calculate Damage",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Request UUID",
+                        "name": "X-Request-ID",
+                        "in": "header"
+                    },
+                    {
+                        "description": "Calculation Parameters",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/damagerequest.DamageRequestDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/damagerequest.DamageResponseDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid input payload",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "definitions": {
+        "calculator.RerollType": {
+            "type": "integer",
+            "enum": [
+                0,
+                1,
+                2
+            ],
+            "x-enum-varnames": [
+                "RerollNone",
+                "RerollOnes",
+                "RerollFail"
+            ]
+        },
+        "damagerequest.AttackerDTO": {
+            "type": "object",
+            "properties": {
+                "ap": {
+                    "type": "integer"
+                },
+                "attacks_string": {
+                    "type": "string"
+                },
+                "blast": {
+                    "description": "Weapon Keywords",
+                    "type": "boolean"
+                },
+                "bs": {
+                    "type": "integer"
+                },
+                "d": {
+                    "type": "string"
+                },
+                "devastating_wounds": {
+                    "type": "boolean"
+                },
+                "hit_modifier": {
+                    "description": "Modifiers (e.g., -1 to hit is -1)",
+                    "type": "integer"
+                },
+                "lethal_hits": {
+                    "type": "boolean"
+                },
+                "num_models": {
+                    "type": "integer"
+                },
+                "s": {
+                    "type": "integer"
+                },
+                "sustained_hits": {
+                    "type": "integer"
+                },
+                "torrent": {
+                    "type": "boolean"
+                },
+                "wound_modifier": {
+                    "type": "integer"
+                }
+            }
+        },
+        "damagerequest.DamageRequestDTO": {
+            "type": "object",
+            "properties": {
+                "attacker": {
+                    "$ref": "#/definitions/damagerequest.AttackerDTO"
+                },
+                "rules": {
+                    "$ref": "#/definitions/damagerequest.RulesDTO"
+                },
+                "target": {
+                    "$ref": "#/definitions/damagerequest.TargetDTO"
+                }
+            }
+        },
+        "damagerequest.DamageResponseDTO": {
+            "type": "object",
+            "properties": {
+                "distributions": {
+                    "$ref": "#/definitions/damagerequest.DistributionsDTO"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "request_uuid": {
+                    "type": "string"
+                },
+                "summary": {
+                    "description": "Grouped or flattened as you prefer, but separate from the core",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/damagerequest.SummaryDTO"
+                        }
+                    ]
+                }
+            }
+        },
+        "damagerequest.DistributionsDTO": {
+            "type": "object",
+            "properties": {
+                "damage": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "number",
+                        "format": "float64"
+                    }
+                },
+                "hits": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "number",
+                        "format": "float64"
+                    }
+                },
+                "models_destroyed": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "number",
+                        "format": "float64"
+                    }
+                },
+                "saves_failed": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "number",
+                        "format": "float64"
+                    }
+                },
+                "wounds": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "number",
+                        "format": "float64"
+                    }
+                }
+            }
+        },
+        "damagerequest.RulesDTO": {
+            "type": "object",
+            "properties": {
+                "critical_hit_threshold": {
+                    "description": "Thresholds allow for rules like \"Critical hits on a 5+\"",
+                    "type": "integer"
+                },
+                "critical_wound_threshold": {
+                    "type": "integer"
+                },
+                "hit_reroll": {
+                    "$ref": "#/definitions/calculator.RerollType"
+                },
+                "save_modifier": {
+                    "type": "integer"
+                },
+                "save_reroll": {
+                    "$ref": "#/definitions/calculator.RerollType"
+                },
+                "wound_reroll": {
+                    "$ref": "#/definitions/calculator.RerollType"
+                }
+            }
+        },
+        "damagerequest.SummaryDTO": {
+            "type": "object",
+            "properties": {
+                "average_destroyed": {
+                    "type": "number"
+                },
+                "average_hits": {
+                    "type": "number"
+                }
+            }
+        },
+        "damagerequest.TargetDTO": {
+            "type": "object",
+            "properties": {
+                "cover": {
+                    "type": "boolean"
+                },
+                "feel_no_pain": {
+                    "description": "FNP (e.g., 6)",
+                    "type": "integer"
+                },
+                "invulnerable": {
+                    "type": "integer"
+                },
+                "model_count": {
+                    "type": "integer"
+                },
+                "save": {
+                    "type": "integer"
+                },
+                "t": {
+                    "type": "integer"
+                },
+                "wounds_per_model": {
+                    "type": "integer"
+                }
+            }
+        }
+    }
+}

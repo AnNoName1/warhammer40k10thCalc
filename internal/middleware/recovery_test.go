@@ -1,4 +1,4 @@
-// Copyright (c) 2025 Olbutov Aleksandr
+// Copyright (c) 2026 Olbutov Aleksandr
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -17,3 +17,29 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
+
+package middleware
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"testing"
+)
+
+func panicHandler(w http.ResponseWriter, r *http.Request) {
+	panic("boom")
+}
+func TestRecoverMiddleware_Panic(t *testing.T) {
+	handler := RecoverMiddleware(http.HandlerFunc(panicHandler))
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	resp := rec.Result()
+
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("expected status 500, got %d", resp.StatusCode)
+	}
+}
