@@ -1,0 +1,105 @@
+# Copyright (c) 2026 Olbutov Aleksandr
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to do so, subject to conditions.
+#
+# The above copyright notice and this permission notice shall be included in all copies.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.
+
+name: Manual Deploy to Stage
+
+on:
+  workflow_dispatch:
+    # Allows manual triggering of the pipeline from the GitHub Actions UI.
+    # The UI will provide a branch selector for choosing the source code branch.
+
+env:
+  REGISTRY: ghcr.io                # Target container registry (GitHub Container Registry)
+  IMAGE_NAME: ${{ github.repository }}  # Default image name (owner/repo format)
+
+jobs:
+  build-and-deploy-stage:
+    runs-on: ubuntu-latest         # Use GitHub-hosted Ubuntu runner
+
+    permissions:
+      contents: read               # Required to clone repository
+      packages: write             # Required to push Docker images to GHCR
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        # Clones the application source repository
+
+      - name: Inject Lowercase Image Name
+        run: |
+          # GHCR requires lowercase image names; GitHub repo may contain uppercase
+          echo "IMAGE_NAME_LOWER=${GITHUB_REPOSITORY,,}" >> ${GITHUB_ENV}
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}          # Actor triggering the workflow
+          password: ${{ secrets.GITHUB_TOKEN }}  # Built-in token with package write permissions
+
+      - name: Extract Go version from go.mod
+        id: goversion
+        run: |
+          # Parse Go version from go.mod (line: "go X.Y")
+          GO_VERSION=$(grep '^go ' go.mod | awk '{print $2}')
+          
+          # Export for subsequent steps
+          echo "GO_VERSION=$GO_VERSION" >> $GITHUB_ENV
+          echo "go_version=$GO_VERSION" >> $GITHUB_OUTPUT
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .               # Build context = repository root
+          push: true               # Push image after build
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}:${{ github.sha }}
+          # Image is tagged with immutable commit SHA → ensures reproducibility
+
+          build-args: |
+            GO_VERSION=${{ env.GO_VERSION }}
+            # Passed into Dockerfile to control Go toolchain version at build time
+
+      - name: Checkout GitOps Repo
+        uses: actions/checkout@v4
+        with:
+          repository: AnNoName1/warhammer40k10thCalc-GitOps
+          token: ${{ secrets.GITOPS_PAT }}
+          path: gitops-repo
+          # Uses Personal Access Token (PAT) because GITHUB_TOKEN cannot access external repos
+
+      - name: Update Stage Image Tag and Push to GitOps
+        run: |
+          cd gitops-repo
+          
+          IMAGE_REPO="${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}"
+          IMAGE_TAG="${{ github.sha }}"
+          TARGET_FILE="cluster-config/apps/web-server/values-stage.yaml"
+          
+          # Update image repository and tag using yq (safe YAML editing)
+          yq eval -i \
+            ".image.repository = \"${IMAGE_REPO}\" | .image.tag = \"${IMAGE_TAG}\"" \
+            "${TARGET_FILE}"
+          
+          # Git configuration
+          git config user.name "GitHub Actions CD"
+          git config user.email "actions@github.com"
+          
+          git add "${TARGET_FILE}"
+          
+          # Only commit if there are actual changes
+          if git diff --staged --quiet; then
+            echo "No changes to commit (image tag already up to date)"
+          else
+            git commit -m "chore(stage): update web-server image to ${IMAGE_TAG} (manual deploy)"
+            git push
+            echo "Successfully pushed new image tag to GitOps repo"
+          fi
