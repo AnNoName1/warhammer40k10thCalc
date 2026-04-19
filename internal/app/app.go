@@ -21,10 +21,13 @@
 package app
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	httpSwagger "github.com/swaggo/http-swagger"
@@ -74,40 +77,82 @@ func NewServer(handler http.Handler, port string) *http.Server {
 	}
 }
 
-// Run initializes the application and starts the HTTP server.
-func Run() error {
+func BuildMux(calc *calculator.DamageCalculatorImpl) *http.ServeMux {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/alive", HealthCheck)
-	mux.HandleFunc("/ready", ReadinessCheck) // New line
-
-	calcCore := &calculator.DamageCalculatorImpl{}
-
-	mux.HandleFunc("/api/damage/calculate", handler.CalculateDamageHandler(calcCore))
-
-	// This serves the documentation at /swagger/index.html
+	mux.HandleFunc("/ready", ReadinessCheck)
+	mux.HandleFunc("/api/damage/calculate", handler.CalculateDamageHandler(calc))
 	mux.Handle("/swagger/", httpSwagger.WrapHandler)
 
-	origins := parseOrigins(os.Getenv("CORS_ALLOWED_ORIGINS"))
+	return mux
+}
 
-	// Wrap the mux with middleware
-	handler := middleware.CORSMiddleware(origins)(
+func BuildHandler(mux *http.ServeMux, origins map[string]bool) http.Handler {
+	return middleware.CORSMiddleware(origins)(
 		middleware.RecoverMiddleware(
 			middleware.LoggingMiddleware(mux),
 		),
 	)
+}
 
-	port := os.Getenv("PORT")
+type Config struct {
+	Port    string
+	Origins map[string]bool
+}
+
+func LoadConfig(getenv func(string) string) Config {
+	port := getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
+	return Config{
+		Port:    port,
+		Origins: parseOrigins(getenv("CORS_ALLOWED_ORIGINS")),
+	}
+}
 
-	log.Printf("Server starting on http://localhost:%s\n", port)
-	log.Printf("Swagger UI available at http://localhost:%s/swagger/index.html\n", port)
-	// Start the server with middleware-wrapped handler
-	srv := NewServer(handler, port)
+func StartServer(srv *http.Server, errCh chan<- error) {
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			errCh <- err
+		}
+	}()
+}
 
-	return srv.ListenAndServe()
+func ShutdownServer(srv *http.Server, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	return srv.Shutdown(ctx)
+}
+
+// Run initializes the application and starts the HTTP server.
+func Run() error {
+	cfg := LoadConfig(os.Getenv)
+
+	calcCore := &calculator.DamageCalculatorImpl{}
+
+	mux := BuildMux(calcCore)
+	handler := BuildHandler(mux, cfg.Origins)
+
+	log.Printf("Server starting on http://localhost:%s\n", cfg.Port)
+	log.Printf("Swagger UI available at http://localhost:%s/swagger/index.html\n", cfg.Port)
+
+	srv := NewServer(handler, cfg.Port)
+
+	errCh := make(chan error, 1)
+	StartServer(srv, errCh)
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+
+	select {
+	case <-quit:
+	case err := <-errCh:
+		return err
+	}
+
+	return ShutdownServer(srv, 30*time.Second)
 }
 
 func parseOrigins(env string) map[string]bool {
