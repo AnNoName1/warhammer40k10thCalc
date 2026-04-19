@@ -31,7 +31,6 @@ func TestAliveHandler_Success(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/alive", nil)
 	rr := httptest.NewRecorder()
 
-	// Assuming you define the handler logic clearly in Run
 	mux := http.NewServeMux()
 	mux.HandleFunc("/alive", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -50,7 +49,6 @@ func TestReadyHandler_Success(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/ready", nil)
 	rr := httptest.NewRecorder()
 
-	// Assuming you define the handler logic clearly in Run
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ready", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

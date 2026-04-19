@@ -25,6 +25,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	httpSwagger "github.com/swaggo/http-swagger"
 
@@ -61,6 +62,18 @@ func ReadinessCheck(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+func NewServer(handler http.Handler, port string) *http.Server {
+	return &http.Server{
+		Addr:              ":" + port,
+		Handler:           handler,
+		ReadTimeout:       10 * time.Second,
+		ReadHeaderTimeout: 5 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    1 << 20,
+	}
+}
+
 // Run initializes the application and starts the HTTP server.
 func Run() error {
 	mux := http.NewServeMux()
@@ -92,7 +105,9 @@ func Run() error {
 	log.Printf("Server starting on http://localhost:%s\n", port)
 	log.Printf("Swagger UI available at http://localhost:%s/swagger/index.html\n", port)
 	// Start the server with middleware-wrapped handler
-	return http.ListenAndServe(":"+port, handler)
+	srv := NewServer(handler, port)
+
+	return srv.ListenAndServe()
 }
 
 func parseOrigins(env string) map[string]bool {
