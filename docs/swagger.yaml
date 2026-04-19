@@ -185,4 +185,18 @@ paths:
       summary: Calculate Damage
       tags:
       - damage
+  /ready:
+    get:
+      description: Confirm the server is ready to receive traffic (currently same
+        as alive).
+      produces:
+      - text/plain
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: string
+      summary: Readiness Check
+      tags:
+      - System
 swagger: "2.0"

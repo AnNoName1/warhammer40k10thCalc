@@ -47,11 +47,26 @@ func HealthCheck(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+// ReadinessCheck godoc
+//
+//	@Summary		Readiness Check
+//	@Description	Confirm the server is ready to receive traffic (currently same as alive).
+//	@Tags			System
+//	@Produce		plain
+//	@Success		200	{string}	string	"OK"
+//	@Router			/ready [get]
+func ReadinessCheck(w http.ResponseWriter, r *http.Request) {
+	// TODO: When DB integration is added, check database connectivity here.
+	// For now, it's identical to HealthCheck.
+	w.WriteHeader(http.StatusOK)
+}
+
 // Run initializes the application and starts the HTTP server.
 func Run() error {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/alive", HealthCheck)
+	mux.HandleFunc("/ready", ReadinessCheck) // New line
 
 	calcCore := &calculator.DamageCalculatorImpl{}
 
