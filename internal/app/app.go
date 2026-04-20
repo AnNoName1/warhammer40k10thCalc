@@ -33,12 +33,12 @@ import (
 	httpSwagger "github.com/swaggo/http-swagger"
 
 	_ "github.com/AnNoName1/warhammer40k10thCalc/docs"
+	"github.com/AnNoName1/warhammer40k10thCalc/pkg/handler"
 
 	"github.com/joho/godotenv"
 
 	calculator "github.com/AnNoName1/warhammer40k10thCalc/internal/calculator"
 	"github.com/AnNoName1/warhammer40k10thCalc/internal/middleware"
-	handler "github.com/AnNoName1/warhammer40k10thCalc/pkg/handler"
 )
 
 // HealthCheck godoc
@@ -81,23 +81,42 @@ func NewServer(handler http.Handler, port string) *http.Server {
 	}
 }
 
-func BuildMux(calc *calculator.DamageCalculatorImpl) *http.ServeMux {
-	mux := http.NewServeMux()
+type Middleware func(http.Handler) http.Handler
 
-	mux.HandleFunc("/alive", HealthCheck)
-	mux.HandleFunc("/ready", ReadinessCheck)
-	mux.HandleFunc("/api/damage/calculate", handler.CalculateDamageHandler(calc))
-	mux.Handle("/swagger/", httpSwagger.WrapHandler)
-
-	return mux
+func Apply(h http.Handler, middlewares ...Middleware) http.Handler {
+	for i := len(middlewares) - 1; i >= 0; i-- {
+		h = middlewares[i](h)
+	}
+	return h
 }
 
-func BuildHandler(mux *http.ServeMux, origins map[string]bool) http.Handler {
-	return middleware.CORSMiddleware(origins)(
-		middleware.RecoverMiddleware(
-			middleware.LoggingMiddleware(mux),
-		),
-	)
+// BuildPublicHandler собирает и оборачивает публичную ветку
+func BuildPublicHandler(middlewares ...Middleware) http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/alive", HealthCheck)
+	mux.HandleFunc("/ready", ReadinessCheck)
+	mux.Handle("/swagger/", httpSwagger.WrapHandler)
+
+	return Apply(mux, middlewares...)
+}
+
+func BuildProtectedHandler(calc *calculator.DamageCalculatorImpl, middlewares ...Middleware) http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/damage/calculate", handler.CalculateDamageHandler(calc))
+
+	return Apply(mux, middlewares...)
+}
+
+func BuildRootHandler(public, protected http.Handler, globalMW ...Middleware) http.Handler {
+	root := http.NewServeMux()
+
+	root.Handle("/alive", public)
+	root.Handle("/ready", public)
+	root.Handle("/swagger/", public)
+
+	root.Handle("/api/", protected)
+
+	return Apply(root, globalMW...)
 }
 
 type Config struct {
@@ -152,8 +171,29 @@ func run(ctx context.Context) error {
 	cfg := LoadConfig(os.Getenv)
 
 	calcCore := &calculator.DamageCalculatorImpl{}
-	mux := BuildMux(calcCore)
-	handler := BuildHandler(mux, cfg.Origins)
+
+	// 1. Initialize Public-facing middleware (Auth-free zones like Healthchecks or Docs)
+	publicMW := []Middleware{
+		// middleware.RateLimitMiddleware,
+	}
+
+	// 2. Initialize Protected middleware (Business logic, logging, and panic recovery)
+	protectedMW := []Middleware{
+		middleware.RecoverMiddleware,
+		middleware.LoggingMiddleware,
+	}
+
+	// 3. Initialize Global middleware (Applied to every single incoming request)
+	globalMW := []Middleware{
+		middleware.CORSMiddleware(cfg.Origins),
+	}
+
+	// 4. Build isolated route branches
+	publicHandler := BuildPublicHandler(publicMW...)
+	protectedHandler := BuildProtectedHandler(calcCore, protectedMW...)
+
+	// 5. Assemble the root router with global middleware wrapper
+	handler := BuildRootHandler(publicHandler, protectedHandler, globalMW...)
 
 	log.Printf("Server starting on http://localhost:%s\n", cfg.Port)
 	log.Printf("Swagger UI available at http://localhost:%s/swagger/index.html\n", cfg.Port)

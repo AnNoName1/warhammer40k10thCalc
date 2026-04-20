@@ -31,9 +31,11 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
+	calculator "github.com/AnNoName1/warhammer40k10thCalc/internal/calculator"
 	"github.com/go-openapi/testify/v2/require"
 )
 
@@ -197,4 +199,107 @@ func TestRun_NoEnvFile_CapturedLog(t *testing.T) {
 	out := buf.String()
 	require.Contains(t, out, kNoFileStr)
 	require.Contains(t, out, "Server starting on")
+}
+
+func markerMiddleware(tag string) Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Add("X-Middleware-Trace", tag)
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+func TestBuildRootHandler_MiddlewareIsolation(t *testing.T) {
+	// 1. Initialize mock middleware for each area of responsibility
+	publicMW := []Middleware{markerMiddleware("public")}
+	protectedMW := []Middleware{markerMiddleware("protected")}
+	globalMW := []Middleware{markerMiddleware("global")}
+
+	// 2. Assemble topology with marker injection
+	calcCore := &calculator.DamageCalculatorImpl{} // Mock or real implementation
+	publicHandler := BuildPublicHandler(publicMW...)
+	protectedHandler := BuildProtectedHandler(calcCore, protectedMW...)
+
+	rootHandler := BuildRootHandler(publicHandler, protectedHandler, globalMW...)
+
+	// 3. Test matrix: path -> expected markers / forbidden markers
+	tests := []struct {
+		name          string
+		path          string
+		expectedCode  int
+		expectedTags  []string
+		forbiddenTags []string
+	}{
+		{
+			name:          "Public: /alive bypasses protected middleware",
+			path:          "/alive",
+			expectedCode:  http.StatusOK,
+			expectedTags:  []string{"global", "public"},
+			forbiddenTags: []string{"protected"},
+		},
+		{
+			name:          "Public: Swagger bypasses protected middleware",
+			path:          "/swagger/index.html",
+			expectedCode:  http.StatusOK, // Or http.StatusMovedPermanently/http.StatusNotFound depending on config
+			expectedTags:  []string{"global", "public"},
+			forbiddenTags: []string{"protected"},
+		},
+		{
+			name:          "Protected: API route uses protected middleware",
+			path:          "/api/damage/calculate",
+			expectedCode:  http.StatusOK, // Or 400/405 depending on implementation
+			expectedTags:  []string{"global", "protected"},
+			forbiddenTags: []string{"public"},
+		},
+		{
+			name:          "Protected: Unknown API route still triggers protected middleware",
+			path:          "/api/unknown_endpoint",
+			expectedCode:  http.StatusNotFound,
+			expectedTags:  []string{"global", "protected"},
+			forbiddenTags: []string{"public"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			rr := httptest.NewRecorder()
+
+			rootHandler.ServeHTTP(rr, req)
+
+			// Retrieve marker array from the header
+			traceHeader := rr.Header().Values("X-Middleware-Trace")
+			traceStr := strings.Join(traceHeader, ",")
+
+			// Verify presence of required middleware
+			for _, tag := range tc.expectedTags {
+				if !contains(traceHeader, tag) {
+					t.Errorf("Missing expected middleware '%s'. Trace: [%s]", tag, traceStr)
+				}
+			}
+
+			// Verify isolation (absence of irrelevant middleware)
+			for _, tag := range tc.forbiddenTags {
+				if contains(traceHeader, tag) {
+					t.Fatalf("Isolation failure: path %s executed forbidden middleware '%s'. Trace: [%s]", tc.path, tag, traceStr)
+				}
+			}
+
+			// Basic routing check (prevents false positives from 404 at the root Mux level)
+			if rr.Code == http.StatusNotFound && tc.expectedCode != http.StatusNotFound {
+				t.Errorf("Expected code %d, got 404. Route might be missing.", tc.expectedCode)
+			}
+		})
+	}
+}
+
+// Helper function to check if a string exists in a slice
+func contains(slice []string, val string) bool {
+	for _, item := range slice {
+		if item == val {
+			return true
+		}
+	}
+	return false
 }
