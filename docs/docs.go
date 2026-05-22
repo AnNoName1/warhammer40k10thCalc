@@ -83,6 +83,26 @@ const docTemplate = `{
                     }
                 }
             }
+        },
+        "/ready": {
+            "get": {
+                "description": "Confirm the server is ready to receive traffic (currently same as alive).",
+                "produces": [
+                    "text/plain"
+                ],
+                "tags": [
+                    "System"
+                ],
+                "summary": "Readiness Check",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
