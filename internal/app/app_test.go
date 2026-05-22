@@ -21,12 +21,20 @@
 package app
 
 import (
+	"bytes"
+	"context"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
+
+	"github.com/go-openapi/testify/v2/require"
 )
 
 func TestAliveHandler_Success(t *testing.T) {
@@ -97,7 +105,9 @@ func TestGracefulShutdown_CompletesInFlightMocked(t *testing.T) {
 	go func() {
 		resp, err := http.Get(fmt.Sprintf("http://localhost:%d/", port))
 		if err == nil {
-			resp.Body.Close()
+			if closeErr := resp.Body.Close(); closeErr != nil {
+				t.Errorf("Response close error: %v", closeErr)
+			}
 		}
 		close(requestCompleted)
 	}()
@@ -120,4 +130,71 @@ func TestGracefulShutdown_CompletesInFlightMocked(t *testing.T) {
 	if elapsed < 2*time.Second {
 		t.Fatal("Shutdown completed prematurely, dropping the in-flight request")
 	}
+}
+
+// freePort asks the OS for an available TCP port and returns it as a string.
+// Using :0 lets the kernel pick; we close the listener before returning so
+// the port is free for the server to bind — there is a tiny TOCTOU window,
+// but it is vastly better than any hardcoded number.
+func freePort(t *testing.T) string {
+	t.Helper()
+	l, err := net.Listen("tcp", ":0")
+	require.NoError(t, err)
+	port := strconv.Itoa(l.Addr().(*net.TCPAddr).Port)
+	require.NoError(t, l.Close())
+	return port
+}
+
+func TestRun_HappyPath(t *testing.T) {
+	port := freePort(t)
+	t.Setenv("PORT", port)
+
+	// Write a real .env so godotenv.Load() succeeds (no "no file" log).
+	tmp := t.TempDir()
+	require.NoError(t, os.WriteFile(
+		filepath.Join(tmp, ".env"),
+		[]byte("PORT="+port),
+		0644,
+	))
+
+	oldWd, err := os.Getwd()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		if err := os.Chdir(oldWd); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to restore working directory: %v\n", err)
+		}
+	})
+	require.NoError(t, os.Chdir(tmp))
+
+	// Cancel after a short window — no signals, no goroutine leaks.
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	require.NoError(t, run(ctx))
+}
+
+func TestRun_NoEnvFile_CapturedLog(t *testing.T) {
+	port := freePort(t)
+	t.Setenv("PORT", port)
+
+	// Empty temp dir — godotenv.Load() will fail, triggering kNoFileStr.
+	tmp := t.TempDir()
+	oldWd, err := os.Getwd()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, os.Chdir(oldWd)) })
+	require.NoError(t, os.Chdir(tmp))
+
+	// Redirect the global logger; restore it when the test ends.
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	require.NoError(t, run(ctx))
+
+	out := buf.String()
+	require.Contains(t, out, kNoFileStr)
+	require.Contains(t, out, "Server starting on")
 }

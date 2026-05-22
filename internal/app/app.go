@@ -34,6 +34,8 @@ import (
 
 	_ "github.com/AnNoName1/warhammer40k10thCalc/docs"
 
+	"github.com/joho/godotenv"
+
 	calculator "github.com/AnNoName1/warhammer40k10thCalc/internal/calculator"
 	"github.com/AnNoName1/warhammer40k10thCalc/internal/middleware"
 	handler "github.com/AnNoName1/warhammer40k10thCalc/pkg/handler"
@@ -64,6 +66,8 @@ func ReadinessCheck(w http.ResponseWriter, r *http.Request) {
 	// For now, it's identical to HealthCheck.
 	w.WriteHeader(http.StatusOK)
 }
+
+const kNoFileStr string = "No env file"
 
 func NewServer(handler http.Handler, port string) *http.Server {
 	return &http.Server{
@@ -127,11 +131,27 @@ func ShutdownServer(srv *http.Server, timeout time.Duration) error {
 }
 
 // Run initializes the application and starts the HTTP server.
+// Run is the production entry point. It wires OS signals to a context
+// and delegates to the testable inner function.
 func Run() error {
+	ctx, stop := signal.NotifyContext(
+		context.Background(),
+		syscall.SIGINT,
+		syscall.SIGTERM,
+	)
+	defer stop()
+	return run(ctx)
+}
+
+// run is the testable core: it starts the server and exits when ctx is
+// cancelled or the server itself errors out.
+func run(ctx context.Context) error {
+	if err := godotenv.Load(); err != nil {
+		log.Print(kNoFileStr)
+	}
 	cfg := LoadConfig(os.Getenv)
 
 	calcCore := &calculator.DamageCalculatorImpl{}
-
 	mux := BuildMux(calcCore)
 	handler := BuildHandler(mux, cfg.Origins)
 
@@ -143,12 +163,9 @@ func Run() error {
 	errCh := make(chan error, 1)
 	StartServer(srv, errCh)
 
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-
 	select {
-	case <-quit:
-	case err := <-errCh:
+	case <-ctx.Done(): // clean cancellation from tests or OS signal
+	case err := <-errCh: // server failed to bind / crashed
 		return err
 	}
 

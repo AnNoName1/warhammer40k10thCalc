@@ -5,6 +5,8 @@ replace github.com/AnNoName1/warhammer40k10thCalc => .
 go 1.24.0
 
 require (
+	github.com/go-openapi/testify/v2 v2.0.2
+	github.com/joho/godotenv v1.5.1
 	github.com/swaggo/http-swagger v1.3.4
 	github.com/swaggo/swag v1.16.6
 )
