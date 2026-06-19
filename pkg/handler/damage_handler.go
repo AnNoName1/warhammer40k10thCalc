@@ -23,8 +23,9 @@ package handler
 import (
 	"encoding/json"
 	"io"
-	"log"
 	"net/http"
+
+	"go.uber.org/zap"
 
 	calculator "github.com/AnNoName1/warhammer40k10thCalc/internal/calculator"
 	middleware "github.com/AnNoName1/warhammer40k10thCalc/internal/middleware"
@@ -47,73 +48,68 @@ type DamageCalculator interface {
 //	@Success		200				{object}	damagerequest.DamageResponseDTO
 //	@Failure		400				{object}	map[string]string	"Invalid input payload"
 //	@Router			/damage/calculate [post]
-func CalculateDamageHandler(calculator DamageCalculator) http.HandlerFunc {
+func CalculateDamageHandler(calculator DamageCalculator, log *zap.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Check if the HTTP method is POST. If not, return a 405 (Method Not Allowed).
 		if r.Method != http.MethodPost {
-			// Use a helper function to send an error response for method mismatch
 			SendError(w, "", "Method Not Allowed", http.StatusMethodNotAllowed)
 			return
 		}
 
-		// Get the Request ID from middleware (useful for tracing/logging)
 		reqID := middleware.GetRequestID(r.Context())
 
-		// Initialize a variable to store the decoded request data
 		var dto damagerequest.DamageRequestDTO
 
-		// Attempt to decode the incoming JSON request body into the DamageRequest struct
 		if err := json.NewDecoder(r.Body).Decode(&dto); err != nil {
-			// Log the error for debugging purposes
-			log.Printf("[%s] JSON decode error: %v", reqID, err)
-
-			// Define a default error message in case of malformed JSON
 			msg := "Malformed JSON or invalid data types"
-
-			// If the error is just an empty body (EOF), provide a specific message
 			if err == io.EOF {
 				msg = "Request body cannot be empty"
 			}
-
-			// Send an error response with the appropriate status code (400 Bad Request)
+			log.Warn("JSON decode error",
+				zap.String("request_id", reqID),
+				zap.Error(err),
+			)
 			SendError(w, reqID, msg, http.StatusBadRequest)
 			return
 		}
 
 		if err := dto.Validate(); err != nil {
+			log.Warn("validation failed",
+				zap.String("request_id", reqID),
+				zap.Error(err),
+			)
 			SendError(w, reqID, err.Error(), http.StatusBadRequest)
 			return
 		}
 
 		domainReq, err := dto.ToDomain()
 		if err != nil {
-			// If parsing a dice string fails,
-			// it will be caught here.
+			log.Warn("domain mapping failed",
+				zap.String("request_id", reqID),
+				zap.Error(err),
+			)
 			SendError(w, reqID, err.Error(), http.StatusUnprocessableEntity)
 			return
 		}
 
-		// Call the business logic layer (calculator) to calculate damage using the decoded request data
 		result, err := calculator.CalculateDamageCore(domainReq)
 		if err != nil {
-			// Log calculation errors for debugging
-			log.Printf("[%s] Calculation error: %v", reqID, err)
-
-			// Send a business logic error response (400 Bad Request)
+			log.Error("calculation error",
+				zap.String("request_id", reqID),
+				zap.Error(err),
+			)
 			SendError(w, reqID, err.Error(), http.StatusBadRequest)
 			return
 		}
 
-		// Assign the Request UUID to the response for tracking purposes
 		resp := damagerequest.MapResultToResponse(result, reqID)
 
-		// Set the response content type to JSON
 		w.Header().Set("Content-Type", "application/json")
-		// Send a 200 OK status with the calculated damage results encoded as JSON
 		w.WriteHeader(http.StatusOK)
 		if err := json.NewEncoder(w).Encode(resp); err != nil {
-			// Log any errors in encoding the response to JSON
-			log.Printf("[%s] Error encoding JSON response: %v", reqID, err)
+			log.Error("JSON encode error",
+				zap.String("request_id", reqID),
+				zap.Error(err),
+			)
 		}
 	}
 }

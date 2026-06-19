@@ -28,6 +28,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"go.uber.org/zap"
+
 	calculator "github.com/AnNoName1/warhammer40k10thCalc/internal/calculator"
 	damagerequest "github.com/AnNoName1/warhammer40k10thCalc/pkg/models"
 )
@@ -80,7 +82,7 @@ func validRequestJSON() string {
 
 func TestCalculateDamageHandler_Success(t *testing.T) {
 	mock := &MockCalculator{}
-	h := CalculateDamageHandler(mock)
+	h := CalculateDamageHandler(mock, zap.NewNop())
 
 	req := httptest.NewRequest(
 		http.MethodPost,
@@ -106,7 +108,7 @@ func TestCalculateDamageHandler_Success(t *testing.T) {
 }
 func TestCalculateDamageHandler_CoreError(t *testing.T) {
 	mock := &MockCalculator{ShouldFail: true}
-	h := CalculateDamageHandler(mock)
+	h := CalculateDamageHandler(mock, zap.NewNop())
 
 	req := httptest.NewRequest(
 		http.MethodPost,
@@ -124,7 +126,7 @@ func TestCalculateDamageHandler_CoreError(t *testing.T) {
 
 func TestCalculateDamageHandler_MethodNotAllowed(t *testing.T) {
 	mock := &MockCalculator{}
-	h := CalculateDamageHandler(mock)
+	h := CalculateDamageHandler(mock, zap.NewNop())
 
 	req := httptest.NewRequest(http.MethodGet, "/damage/calculate", nil)
 	rr := httptest.NewRecorder()
@@ -138,7 +140,7 @@ func TestCalculateDamageHandler_MethodNotAllowed(t *testing.T) {
 
 func TestCalculateDamageHandler_MalformedJSON(t *testing.T) {
 	mock := &MockCalculator{}
-	h := CalculateDamageHandler(mock)
+	h := CalculateDamageHandler(mock, zap.NewNop())
 
 	req := httptest.NewRequest(
 		http.MethodPost,
@@ -156,7 +158,7 @@ func TestCalculateDamageHandler_MalformedJSON(t *testing.T) {
 
 func TestCalculateDamageHandler_ValidationDeepDive(t *testing.T) {
 	mock := &MockCalculator{}
-	h := CalculateDamageHandler(mock)
+	h := CalculateDamageHandler(mock, zap.NewNop())
 
 	// Sub-tests for specific validation rules
 	t.Run("ValueRangeFail_BS", func(t *testing.T) {

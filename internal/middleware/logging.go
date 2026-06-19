@@ -24,9 +24,10 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
-	"log"
 	"net/http"
 	"time"
+
+	"go.uber.org/zap"
 )
 
 type responseWriter struct {
@@ -60,33 +61,57 @@ func GetRequestID(ctx context.Context) string {
 	return ""
 }
 
-// LoggingMiddleware logs request info and ensures a request ID in context and response header.
-func LoggingMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Prefer client-provided X-Request-ID, otherwise generate one
-		reqID := r.Header.Get("X-Request-ID")
-		if reqID == "" {
-			reqID = newRequestID()
-		}
+// LoggingMiddleware returns a middleware that logs every request with structured zap fields.
+// Debug: request start; Info/Warn/Error: request end based on status code (2xx/4xx/5xx).
+func LoggingMiddleware(log *zap.Logger) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			reqID := r.Header.Get("X-Request-ID")
+			if reqID == "" {
+				reqID = newRequestID()
+			}
 
-		// attach to context and response header
-		r = r.WithContext(context.WithValue(r.Context(), RequestIDKey, reqID))
-		w.Header().Set("X-Request-ID", reqID)
+			r = r.WithContext(context.WithValue(r.Context(), RequestIDKey, reqID))
+			w.Header().Set("X-Request-ID", reqID)
 
-		start := time.Now()
-		rw := &responseWriter{ResponseWriter: w}
+			start := time.Now()
+			rw := &responseWriter{ResponseWriter: w}
 
-		// log before
-		remote := r.RemoteAddr
-		log.Printf("[%s] START %s %s from %s", reqID, r.Method, r.URL.Path, remote)
+			log.Debug("request started",
+				zap.String("request_id", reqID),
+				zap.String("method", r.Method),
+				zap.String("path", r.URL.Path),
+				zap.String("remote_addr", r.RemoteAddr),
+			)
 
-		next.ServeHTTP(rw, r)
+			next.ServeHTTP(rw, r)
 
-		duration := time.Since(start)
+			duration := time.Since(start)
+			status := rw.status
+			if status == 0 {
+				status = http.StatusOK
+			}
 
-		// log after
-		log.Printf("[%s] END %s %s %d %dB %s %s", reqID, r.Method, r.URL.Path, rw.status, rw.bytes, duration, remote)
-	})
+			fields := []zap.Field{
+				zap.String("request_id", reqID),
+				zap.String("method", r.Method),
+				zap.String("path", r.URL.Path),
+				zap.Int("status_code", status),
+				zap.Duration("duration", duration),
+				zap.String("remote_addr", r.RemoteAddr),
+				zap.Int("response_bytes", rw.bytes),
+			}
+
+			switch {
+			case status >= 500:
+				log.Error("request completed", fields...)
+			case status >= 400:
+				log.Warn("request completed", fields...)
+			default:
+				log.Info("request completed", fields...)
+			}
+		})
+	}
 }
 
 type ctxKey string
@@ -105,5 +130,3 @@ func newRequestID() string {
 	b[8] = (b[8] & 0x3f) | 0x80
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
-
-// Prefer client-provided X-Request-ID, otherwise generate one

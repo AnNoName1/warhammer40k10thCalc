@@ -24,11 +24,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"go.uber.org/zap"
 )
 
 func TestMiddlewareChain_Panic(t *testing.T) {
-	handler := RecoverMiddleware(
-		LoggingMiddleware(
+	nop := zap.NewNop()
+	handler := RecoverMiddleware(nop)(
+		LoggingMiddleware(nop)(
 			http.HandlerFunc(panicHandler),
 		),
 	)

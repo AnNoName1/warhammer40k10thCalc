@@ -30,6 +30,8 @@ import (
 	"syscall"
 	"time"
 
+	"go.uber.org/zap"
+
 	httpSwagger "github.com/swaggo/http-swagger"
 
 	_ "github.com/AnNoName1/warhammer40k10thCalc/docs"
@@ -100,9 +102,9 @@ func BuildPublicHandler(middlewares ...Middleware) http.Handler {
 	return Apply(mux, middlewares...)
 }
 
-func BuildProtectedHandler(calc *calculator.DamageCalculatorImpl, middlewares ...Middleware) http.Handler {
+func BuildProtectedHandler(calc *calculator.DamageCalculatorImpl, log *zap.Logger, middlewares ...Middleware) http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/damage/calculate", handler.CalculateDamageHandler(calc))
+	mux.HandleFunc("/api/damage/calculate", handler.CalculateDamageHandler(calc, log))
 
 	return Apply(mux, middlewares...)
 }
@@ -170,6 +172,12 @@ func run(ctx context.Context) error {
 	}
 	cfg := LoadConfig(os.Getenv)
 
+	logger, err := zap.NewProduction()
+	if err != nil {
+		return err
+	}
+	defer logger.Sync() //nolint:errcheck
+
 	calcCore := &calculator.DamageCalculatorImpl{}
 
 	// 1. Initialize Public-facing middleware (Auth-free zones like Healthchecks or Docs)
@@ -179,8 +187,8 @@ func run(ctx context.Context) error {
 
 	// 2. Initialize Protected middleware (Business logic, logging, and panic recovery)
 	protectedMW := []Middleware{
-		middleware.RecoverMiddleware,
-		middleware.LoggingMiddleware,
+		middleware.RecoverMiddleware(logger),
+		middleware.LoggingMiddleware(logger),
 	}
 
 	// 3. Initialize Global middleware (Applied to every single incoming request)
@@ -190,13 +198,15 @@ func run(ctx context.Context) error {
 
 	// 4. Build isolated route branches
 	publicHandler := BuildPublicHandler(publicMW...)
-	protectedHandler := BuildProtectedHandler(calcCore, protectedMW...)
+	protectedHandler := BuildProtectedHandler(calcCore, logger, protectedMW...)
 
 	// 5. Assemble the root router with global middleware wrapper
 	handler := BuildRootHandler(publicHandler, protectedHandler, globalMW...)
 
-	log.Printf("Server starting on http://localhost:%s\n", cfg.Port)
-	log.Printf("Swagger UI available at http://localhost:%s/swagger/index.html\n", cfg.Port)
+	logger.Info("server starting",
+		zap.String("addr", "http://localhost:"+cfg.Port),
+		zap.String("swagger", "http://localhost:"+cfg.Port+"/swagger/index.html"),
+	)
 
 	srv := NewServer(handler, cfg.Port)
 

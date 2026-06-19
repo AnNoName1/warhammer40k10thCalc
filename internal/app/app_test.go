@@ -35,6 +35,8 @@ import (
 	"testing"
 	"time"
 
+	"go.uber.org/zap"
+
 	calculator "github.com/AnNoName1/warhammer40k10thCalc/internal/calculator"
 	"github.com/go-openapi/testify/v2/require"
 )
@@ -198,7 +200,6 @@ func TestRun_NoEnvFile_CapturedLog(t *testing.T) {
 
 	out := buf.String()
 	require.Contains(t, out, kNoFileStr)
-	require.Contains(t, out, "Server starting on")
 }
 
 func markerMiddleware(tag string) Middleware {
@@ -219,7 +220,7 @@ func TestBuildRootHandler_MiddlewareIsolation(t *testing.T) {
 	// 2. Assemble topology with marker injection
 	calcCore := &calculator.DamageCalculatorImpl{} // Mock or real implementation
 	publicHandler := BuildPublicHandler(publicMW...)
-	protectedHandler := BuildProtectedHandler(calcCore, protectedMW...)
+	protectedHandler := BuildProtectedHandler(calcCore, zap.NewNop(), protectedMW...)
 
 	rootHandler := BuildRootHandler(publicHandler, protectedHandler, globalMW...)
 

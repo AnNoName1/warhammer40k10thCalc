@@ -21,26 +21,27 @@
 package middleware
 
 import (
-	"log"
 	"net/http"
+
+	"go.uber.org/zap"
 )
 
-func RecoverMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		defer func() {
-			if rec := recover(); rec != nil {
-				reqID := GetRequestID(r.Context())
+// RecoverMiddleware catches panics in the handler chain and returns 500.
+func RecoverMiddleware(log *zap.Logger) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			defer func() {
+				if rec := recover(); rec != nil {
+					reqID := GetRequestID(r.Context())
+					log.Error("panic recovered",
+						zap.String("request_id", reqID),
+						zap.Any("error", rec),
+					)
+					http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+				}
+			}()
 
-				log.Printf("[%s] PANIC: %v", reqID, rec)
-
-				http.Error(
-					w,
-					"Internal Server Error",
-					http.StatusInternalServerError,
-				)
-			}
-		}()
-
-		next.ServeHTTP(w, r)
-	})
+			next.ServeHTTP(w, r)
+		})
+	}
 }
