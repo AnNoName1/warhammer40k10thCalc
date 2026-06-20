@@ -123,9 +123,10 @@ func BuildRootHandler(public, protected http.Handler, globalMW ...Middleware) ht
 }
 
 type Config struct {
-	Port     string
-	Origins  map[string]bool
-	LogLevel string
+	Port       string
+	Origins    map[string]bool
+	LogLevel   string
+	InstanceID string
 }
 
 func LoadConfig(getenv func(string) string) Config {
@@ -138,9 +139,10 @@ func LoadConfig(getenv func(string) string) Config {
 		logLevel = "info"
 	}
 	return Config{
-		Port:     port,
-		Origins:  parseOrigins(getenv("CORS_ALLOWED_ORIGINS")),
-		LogLevel: logLevel,
+		Port:       port,
+		Origins:    parseOrigins(getenv("CORS_ALLOWED_ORIGINS")),
+		LogLevel:   logLevel,
+		InstanceID: getenv("HOSTNAME"),
 	}
 }
 
@@ -196,6 +198,10 @@ func run(ctx context.Context) error {
 		return err
 	}
 	defer logger.Sync() //nolint:errcheck
+
+	if cfg.InstanceID != "" {
+		logger = logger.With(zap.String("X-Instance-ID", cfg.InstanceID))
+	}
 
 	calcCore := &calculator.DamageCalculatorImpl{}
 
