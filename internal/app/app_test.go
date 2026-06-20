@@ -36,6 +36,7 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 
 	calculator "github.com/AnNoName1/warhammer40k10thCalc/internal/calculator"
 	"github.com/go-openapi/testify/v2/require"
@@ -303,4 +304,65 @@ func contains(slice []string, val string) bool {
 		}
 	}
 	return false
+}
+
+func TestLoadConfig_LogLevel_DefaultsToInfo(t *testing.T) {
+	cfg := LoadConfig(func(string) string { return "" })
+	require.Equal(t, "info", cfg.LogLevel)
+}
+
+func TestLoadConfig_LogLevel_ReadsEnv(t *testing.T) {
+	cfg := LoadConfig(func(key string) string {
+		if key == "LOG_LEVEL" {
+			return "debug"
+		}
+		return ""
+	})
+	require.Equal(t, "debug", cfg.LogLevel)
+}
+
+func TestNewLogger_ValidLevels(t *testing.T) {
+	tests := []struct {
+		input     string
+		wantLevel zapcore.Level
+	}{
+		{"debug", zapcore.DebugLevel},
+		{"info", zapcore.InfoLevel},
+		{"warn", zapcore.WarnLevel},
+		{"error", zapcore.ErrorLevel},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.input, func(t *testing.T) {
+			logger, err := NewLogger(tc.input)
+			require.NoError(t, err)
+			require.NotNil(t, logger)
+
+			require.True(t, logger.Core().Enabled(tc.wantLevel),
+				"expected level %s to be enabled", tc.wantLevel)
+
+			if tc.wantLevel > zapcore.DebugLevel {
+				require.False(t, logger.Core().Enabled(tc.wantLevel-1),
+					"expected level below %s to be disabled", tc.wantLevel)
+			}
+		})
+	}
+}
+
+func TestNewLogger_InvalidLevel_FallsBackToInfo(t *testing.T) {
+	logger, err := NewLogger("banana")
+	require.NoError(t, err)
+	require.NotNil(t, logger)
+
+	require.True(t, logger.Core().Enabled(zapcore.InfoLevel))
+	require.False(t, logger.Core().Enabled(zapcore.DebugLevel))
+}
+
+func TestNewLogger_EmptyLevel_FallsBackToInfo(t *testing.T) {
+	logger, err := NewLogger("")
+	require.NoError(t, err)
+	require.NotNil(t, logger)
+
+	require.True(t, logger.Core().Enabled(zapcore.InfoLevel))
+	require.False(t, logger.Core().Enabled(zapcore.DebugLevel))
 }

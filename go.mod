@@ -9,13 +9,13 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/swaggo/http-swagger v1.3.4
 	github.com/swaggo/swag v1.16.6
+	go.uber.org/zap v1.28.0
 )
 
 require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	go.uber.org/multierr v1.10.0 // indirect
-	go.uber.org/zap v1.28.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 

@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 
 	httpSwagger "github.com/swaggo/http-swagger"
 
@@ -122,8 +123,9 @@ func BuildRootHandler(public, protected http.Handler, globalMW ...Middleware) ht
 }
 
 type Config struct {
-	Port    string
-	Origins map[string]bool
+	Port     string
+	Origins  map[string]bool
+	LogLevel string
 }
 
 func LoadConfig(getenv func(string) string) Config {
@@ -131,10 +133,27 @@ func LoadConfig(getenv func(string) string) Config {
 	if port == "" {
 		port = "8080"
 	}
-	return Config{
-		Port:    port,
-		Origins: parseOrigins(getenv("CORS_ALLOWED_ORIGINS")),
+	logLevel := getenv("LOG_LEVEL")
+	if logLevel == "" {
+		logLevel = "info"
 	}
+	return Config{
+		Port:     port,
+		Origins:  parseOrigins(getenv("CORS_ALLOWED_ORIGINS")),
+		LogLevel: logLevel,
+	}
+}
+
+func NewLogger(levelStr string) (*zap.Logger, error) {
+	var level zapcore.Level
+	if err := level.UnmarshalText([]byte(levelStr)); err != nil {
+		level = zapcore.InfoLevel // safe fallback
+	}
+
+	cfg := zap.NewProductionConfig()
+	cfg.Level = zap.NewAtomicLevelAt(level)
+
+	return cfg.Build()
 }
 
 func StartServer(srv *http.Server, errCh chan<- error) {
@@ -172,7 +191,7 @@ func run(ctx context.Context) error {
 	}
 	cfg := LoadConfig(os.Getenv)
 
-	logger, err := zap.NewProduction()
+	logger, err := NewLogger(cfg.LogLevel)
 	if err != nil {
 		return err
 	}
