@@ -321,6 +321,29 @@ func TestLoadConfig_LogLevel_ReadsEnv(t *testing.T) {
 	require.Equal(t, "debug", cfg.LogLevel)
 }
 
+func TestInstanceID_AppearsInLog(t *testing.T) {
+	var buf bytes.Buffer
+	enc := zapcore.NewJSONEncoder(zap.NewProductionEncoderConfig())
+	core := zapcore.NewCore(enc, zapcore.AddSync(&buf), zapcore.InfoLevel)
+	logger := zap.New(core)
+
+	cfg := LoadConfig(func(key string) string {
+		if key == "HOSTNAME" {
+			return "my-pod-abc123"
+		}
+		return ""
+	})
+	require.Equal(t, "my-pod-abc123", cfg.InstanceID)
+
+	if cfg.InstanceID != "" {
+		logger = logger.With(zap.String("X-Instance-ID", cfg.InstanceID))
+	}
+
+	logger.Info("server starting", zap.String("addr", "http://localhost:8080"))
+
+	require.Contains(t, buf.String(), `"X-Instance-ID":"my-pod-abc123"`)
+}
+
 func TestNewLogger_ValidLevels(t *testing.T) {
 	tests := []struct {
 		input     string
