@@ -35,6 +35,9 @@ import (
 	"testing"
 	"time"
 
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+
 	calculator "github.com/AnNoName1/warhammer40k10thCalc/internal/calculator"
 	"github.com/go-openapi/testify/v2/require"
 )
@@ -198,7 +201,6 @@ func TestRun_NoEnvFile_CapturedLog(t *testing.T) {
 
 	out := buf.String()
 	require.Contains(t, out, kNoFileStr)
-	require.Contains(t, out, "Server starting on")
 }
 
 func markerMiddleware(tag string) Middleware {
@@ -219,7 +221,7 @@ func TestBuildRootHandler_MiddlewareIsolation(t *testing.T) {
 	// 2. Assemble topology with marker injection
 	calcCore := &calculator.DamageCalculatorImpl{} // Mock or real implementation
 	publicHandler := BuildPublicHandler(publicMW...)
-	protectedHandler := BuildProtectedHandler(calcCore, protectedMW...)
+	protectedHandler := BuildProtectedHandler(calcCore, zap.NewNop(), protectedMW...)
 
 	rootHandler := BuildRootHandler(publicHandler, protectedHandler, globalMW...)
 
@@ -302,4 +304,88 @@ func contains(slice []string, val string) bool {
 		}
 	}
 	return false
+}
+
+func TestLoadConfig_LogLevel_DefaultsToInfo(t *testing.T) {
+	cfg := LoadConfig(func(string) string { return "" })
+	require.Equal(t, "info", cfg.LogLevel)
+}
+
+func TestLoadConfig_LogLevel_ReadsEnv(t *testing.T) {
+	cfg := LoadConfig(func(key string) string {
+		if key == "LOG_LEVEL" {
+			return "debug"
+		}
+		return ""
+	})
+	require.Equal(t, "debug", cfg.LogLevel)
+}
+
+func TestInstanceID_AppearsInLog(t *testing.T) {
+	var buf bytes.Buffer
+	enc := zapcore.NewJSONEncoder(zap.NewProductionEncoderConfig())
+	core := zapcore.NewCore(enc, zapcore.AddSync(&buf), zapcore.InfoLevel)
+	logger := zap.New(core)
+
+	cfg := LoadConfig(func(key string) string {
+		if key == "HOSTNAME" {
+			return "my-pod-abc123"
+		}
+		return ""
+	})
+	require.Equal(t, "my-pod-abc123", cfg.InstanceID)
+
+	if cfg.InstanceID != "" {
+		logger = logger.With(zap.String("X-Instance-ID", cfg.InstanceID))
+	}
+
+	logger.Info("server starting", zap.String("addr", "http://localhost:8080"))
+
+	require.Contains(t, buf.String(), `"X-Instance-ID":"my-pod-abc123"`)
+}
+
+func TestNewLogger_ValidLevels(t *testing.T) {
+	tests := []struct {
+		input     string
+		wantLevel zapcore.Level
+	}{
+		{"debug", zapcore.DebugLevel},
+		{"info", zapcore.InfoLevel},
+		{"warn", zapcore.WarnLevel},
+		{"error", zapcore.ErrorLevel},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.input, func(t *testing.T) {
+			logger, err := NewLogger(tc.input)
+			require.NoError(t, err)
+			require.NotNil(t, logger)
+
+			require.True(t, logger.Core().Enabled(tc.wantLevel),
+				"expected level %s to be enabled", tc.wantLevel)
+
+			if tc.wantLevel > zapcore.DebugLevel {
+				require.False(t, logger.Core().Enabled(tc.wantLevel-1),
+					"expected level below %s to be disabled", tc.wantLevel)
+			}
+		})
+	}
+}
+
+func TestNewLogger_InvalidLevel_FallsBackToInfo(t *testing.T) {
+	logger, err := NewLogger("banana")
+	require.NoError(t, err)
+	require.NotNil(t, logger)
+
+	require.True(t, logger.Core().Enabled(zapcore.InfoLevel))
+	require.False(t, logger.Core().Enabled(zapcore.DebugLevel))
+}
+
+func TestNewLogger_EmptyLevel_FallsBackToInfo(t *testing.T) {
+	logger, err := NewLogger("")
+	require.NoError(t, err)
+	require.NotNil(t, logger)
+
+	require.True(t, logger.Core().Enabled(zapcore.InfoLevel))
+	require.False(t, logger.Core().Enabled(zapcore.DebugLevel))
 }

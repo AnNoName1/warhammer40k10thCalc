@@ -24,13 +24,15 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"go.uber.org/zap"
 )
 
 func panicHandler(w http.ResponseWriter, r *http.Request) {
 	panic("boom")
 }
 func TestRecoverMiddleware_Panic(t *testing.T) {
-	handler := RecoverMiddleware(http.HandlerFunc(panicHandler))
+	handler := RecoverMiddleware(zap.NewNop())(http.HandlerFunc(panicHandler))
 
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
 	rec := httptest.NewRecorder()

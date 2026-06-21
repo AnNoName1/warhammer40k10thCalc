@@ -25,6 +25,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"go.uber.org/zap"
 )
 
 func TestLoggingMiddleware_GeneratesAndPropagatesRequestID(t *testing.T) {
@@ -41,7 +43,7 @@ func TestLoggingMiddleware_GeneratesAndPropagatesRequestID(t *testing.T) {
 		http.Error(w, "no id", http.StatusInternalServerError)
 	})
 
-	h := LoggingMiddleware(next)
+	h := LoggingMiddleware(zap.NewNop())(next)
 
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
 	rr := httptest.NewRecorder()
@@ -81,7 +83,7 @@ func TestLoggingMiddleware_PreservesClientRequestID(t *testing.T) {
 		http.Error(w, "no id", http.StatusInternalServerError)
 	})
 
-	h := LoggingMiddleware(next)
+	h := LoggingMiddleware(zap.NewNop())(next)
 
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
 	clientID := "client-provided-id-123"

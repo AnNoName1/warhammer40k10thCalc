@@ -30,6 +30,9 @@ import (
 	"syscall"
 	"time"
 
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+
 	httpSwagger "github.com/swaggo/http-swagger"
 
 	_ "github.com/AnNoName1/warhammer40k10thCalc/docs"
@@ -100,9 +103,9 @@ func BuildPublicHandler(middlewares ...Middleware) http.Handler {
 	return Apply(mux, middlewares...)
 }
 
-func BuildProtectedHandler(calc *calculator.DamageCalculatorImpl, middlewares ...Middleware) http.Handler {
+func BuildProtectedHandler(calc *calculator.DamageCalculatorImpl, log *zap.Logger, middlewares ...Middleware) http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/damage/calculate", handler.CalculateDamageHandler(calc))
+	mux.HandleFunc("/api/damage/calculate", handler.CalculateDamageHandler(calc, log))
 
 	return Apply(mux, middlewares...)
 }
@@ -120,8 +123,10 @@ func BuildRootHandler(public, protected http.Handler, globalMW ...Middleware) ht
 }
 
 type Config struct {
-	Port    string
-	Origins map[string]bool
+	Port       string
+	Origins    map[string]bool
+	LogLevel   string
+	InstanceID string
 }
 
 func LoadConfig(getenv func(string) string) Config {
@@ -129,10 +134,28 @@ func LoadConfig(getenv func(string) string) Config {
 	if port == "" {
 		port = "8080"
 	}
-	return Config{
-		Port:    port,
-		Origins: parseOrigins(getenv("CORS_ALLOWED_ORIGINS")),
+	logLevel := getenv("LOG_LEVEL")
+	if logLevel == "" {
+		logLevel = "info"
 	}
+	return Config{
+		Port:       port,
+		Origins:    parseOrigins(getenv("CORS_ALLOWED_ORIGINS")),
+		LogLevel:   logLevel,
+		InstanceID: getenv("HOSTNAME"),
+	}
+}
+
+func NewLogger(levelStr string) (*zap.Logger, error) {
+	var level zapcore.Level
+	if err := level.UnmarshalText([]byte(levelStr)); err != nil {
+		level = zapcore.InfoLevel // safe fallback
+	}
+
+	cfg := zap.NewProductionConfig()
+	cfg.Level = zap.NewAtomicLevelAt(level)
+
+	return cfg.Build()
 }
 
 func StartServer(srv *http.Server, errCh chan<- error) {
@@ -170,6 +193,16 @@ func run(ctx context.Context) error {
 	}
 	cfg := LoadConfig(os.Getenv)
 
+	logger, err := NewLogger(cfg.LogLevel)
+	if err != nil {
+		return err
+	}
+	defer logger.Sync() //nolint:errcheck
+
+	if cfg.InstanceID != "" {
+		logger = logger.With(zap.String("X-Instance-ID", cfg.InstanceID))
+	}
+
 	calcCore := &calculator.DamageCalculatorImpl{}
 
 	// 1. Initialize Public-facing middleware (Auth-free zones like Healthchecks or Docs)
@@ -179,8 +212,8 @@ func run(ctx context.Context) error {
 
 	// 2. Initialize Protected middleware (Business logic, logging, and panic recovery)
 	protectedMW := []Middleware{
-		middleware.RecoverMiddleware,
-		middleware.LoggingMiddleware,
+		middleware.RecoverMiddleware(logger),
+		middleware.LoggingMiddleware(logger),
 	}
 
 	// 3. Initialize Global middleware (Applied to every single incoming request)
@@ -190,13 +223,15 @@ func run(ctx context.Context) error {
 
 	// 4. Build isolated route branches
 	publicHandler := BuildPublicHandler(publicMW...)
-	protectedHandler := BuildProtectedHandler(calcCore, protectedMW...)
+	protectedHandler := BuildProtectedHandler(calcCore, logger, protectedMW...)
 
 	// 5. Assemble the root router with global middleware wrapper
 	handler := BuildRootHandler(publicHandler, protectedHandler, globalMW...)
 
-	log.Printf("Server starting on http://localhost:%s\n", cfg.Port)
-	log.Printf("Swagger UI available at http://localhost:%s/swagger/index.html\n", cfg.Port)
+	logger.Info("server starting",
+		zap.String("addr", "http://localhost:"+cfg.Port),
+		zap.String("swagger", "http://localhost:"+cfg.Port+"/swagger/index.html"),
+	)
 
 	srv := NewServer(handler, cfg.Port)
 

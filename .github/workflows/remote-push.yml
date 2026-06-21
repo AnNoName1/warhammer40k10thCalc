@@ -100,7 +100,8 @@ jobs:
           mapfile -t PKGS < <(
             printf '%s\n' "${GO_FILES[@]}" \
               | xargs -n1 dirname \
-              | sort -u
+              | sort -u \
+              | sed 's|^|./|'
           )
 
           go vet "${PKGS[@]}"
