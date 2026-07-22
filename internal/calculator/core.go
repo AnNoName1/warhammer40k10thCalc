@@ -86,58 +86,11 @@ func (d *DamageCalculatorImpl) CalculateDamageCore(req CombatSimulationRequest) 
 	// ── 5. Max attacks for sizing ──────────────────────────────────
 	bounds := computeHitBounds(attackCountDist, hitOutcomeDist)
 
-	// ── 6. Joint distribution: normal-before-save × devastating ────
-	jointNormalBeforeSave_Dev := make([][]float64, bounds.maxHits+1)
-	for i := range jointNormalBeforeSave_Dev {
-		jointNormalBeforeSave_Dev[i] = make([]float64, bounds.maxHits+1)
-	}
-
 	// ── 7. Hits distribution (exact, discrete) ─────────────────────
 	finalAutoWoundNormalHitDist := computeAutoWoundNormalHitDist(hitOutcomeDist, attackCountDist, bounds)
 
-	// ── WOUND & DEVASTATING WOUND RESOLUTION ───────────────────────────
-
-	// Precompute binomials (caching)
-	pAnyWound := probNormalWound + probDevWound
-	pDevCond := 0.0
-	if pAnyWound > 0 {
-		pDevCond = probDevWound / pAnyWound
-	}
-	binomAny := precomputeBinomials(bounds.maxN, pAnyWound)
-	binomDev := precomputeBinomials(bounds.maxN, pDevCond) // max wounds <= maxN
-
-	for autoWounds := 0; autoWounds <= bounds.maxL; autoWounds++ {
-		for normalHits := 0; normalHits <= bounds.maxN; normalHits++ {
-			pState := finalAutoWoundNormalHitDist[autoWounds][normalHits]
-			if pState < 1e-15 {
-				continue
-			}
-
-			// If no wounds possible or no normal hits, only auto-wounds contribute.
-			if pAnyWound <= 0 || normalHits == 0 {
-				jointNormalBeforeSave_Dev[autoWounds][0] += pState
-				continue
-			}
-
-			// Roll to wound for normal hits only.
-			for totalWounds, pWound := range binomAny[normalHits] {
-				if pWound < 1e-15 {
-					continue
-				}
-
-				// Split wounds into normal vs devastating.
-				for devWounds, pDev := range binomDev[totalWounds] {
-					pFinal := pState * pWound * pDev
-					if pFinal < 1e-15 {
-						continue
-					}
-
-					normWounds := autoWounds + (totalWounds - devWounds)
-					jointNormalBeforeSave_Dev[normWounds][devWounds] += pFinal
-				}
-			}
-		}
-	}
+	// ── 6. Joint distribution: normal-before-save × devastating ────
+	jointWoundDist := computeJointWoundDist(finalAutoWoundNormalHitDist, bounds, probNormalWound, probDevWound)
 
 	// ── Hits distribution (Total Hits = Normal + Lethal) ──
 	// ── FINAL TOTAL HIT DISTRIBUTION (Normal + Auto) ───────────────────
@@ -164,7 +117,7 @@ func (d *DamageCalculatorImpl) CalculateDamageCore(req CombatSimulationRequest) 
 	// ── 8. Total potential wounds dist (nw + dw) ──────────
 	totalWoundsDist := make([]float64, bounds.maxHits+1)
 	for nw := 0; nw <= bounds.maxHits; nw++ {
-		row := jointNormalBeforeSave_Dev[nw]
+		row := jointWoundDist[nw]
 		for dw := 0; dw <= bounds.maxHits; dw++ {
 			p := row[dw]
 			if p < 1e-15 {
@@ -183,7 +136,7 @@ func (d *DamageCalculatorImpl) CalculateDamageCore(req CombatSimulationRequest) 
 	finalUnsavedDist := make([]float64, bounds.maxHits+1)
 	for nw := 0; nw <= bounds.maxHits; nw++ {
 		for dw := 0; dw <= bounds.maxHits; dw++ {
-			pJoint := jointNormalBeforeSave_Dev[nw][dw]
+			pJoint := jointWoundDist[nw][dw]
 			if pJoint < 1e-15 {
 				continue
 			}
@@ -214,7 +167,7 @@ func (d *DamageCalculatorImpl) CalculateDamageCore(req CombatSimulationRequest) 
 	damageConvs[0] = []float64{1.0}
 
 	for nw := 0; nw <= bounds.maxHits; nw++ {
-		row := jointNormalBeforeSave_Dev[nw]
+		row := jointWoundDist[nw]
 		for dw := 0; dw <= bounds.maxHits; dw++ {
 			pJoint := row[dw]
 			if pJoint < 1e-12 {
@@ -362,6 +315,67 @@ func computeAutoWoundNormalHitDist(hitOutcomeDist map[HitOutcome]float64, attack
 	}
 
 	return finalAutoWoundNormalHitDist
+}
+
+// NormalDevastatingWoundMatrix is the joint probability mass of
+// (normal wounds before save, devastating wounds), indexed
+// [normalWounds][devastatingWounds].
+type NormalDevastatingWoundMatrix [][]float64
+
+// computeJointWoundDist resolves each (autoWounds, normalHits) hit-count
+// state into wounds: normal hits roll to wound independently (binomAny),
+// and each of those wounds is further split into normal vs. devastating
+// (binomDev, conditioned on having already wounded). Auto-wounds (from
+// Lethal Hits) always wound, so they pass straight through.
+func computeJointWoundDist(autoWoundNormalHitDist AutoWoundNormalHitMatrix, bounds hitBounds, probNormalWound, probDevWound float64) NormalDevastatingWoundMatrix {
+	jointWoundDist := make(NormalDevastatingWoundMatrix, bounds.maxHits+1)
+	for i := range jointWoundDist {
+		jointWoundDist[i] = make([]float64, bounds.maxHits+1)
+	}
+
+	// Precompute binomials (caching)
+	pAnyWound := probNormalWound + probDevWound
+	pDevCond := 0.0
+	if pAnyWound > 0 {
+		pDevCond = probDevWound / pAnyWound
+	}
+	binomAny := precomputeBinomials(bounds.maxN, pAnyWound)
+	binomDev := precomputeBinomials(bounds.maxN, pDevCond) // max wounds <= maxN
+
+	for autoWounds := 0; autoWounds <= bounds.maxL; autoWounds++ {
+		for normalHits := 0; normalHits <= bounds.maxN; normalHits++ {
+			pState := autoWoundNormalHitDist[autoWounds][normalHits]
+			if pState < 1e-15 {
+				continue
+			}
+
+			// If no wounds possible or no normal hits, only auto-wounds contribute.
+			if pAnyWound <= 0 || normalHits == 0 {
+				jointWoundDist[autoWounds][0] += pState
+				continue
+			}
+
+			// Roll to wound for normal hits only.
+			for totalWounds, pWound := range binomAny[normalHits] {
+				if pWound < 1e-15 {
+					continue
+				}
+
+				// Split wounds into normal vs devastating.
+				for devWounds, pDev := range binomDev[totalWounds] {
+					pFinal := pState * pWound * pDev
+					if pFinal < 1e-15 {
+						continue
+					}
+
+					normWounds := autoWounds + (totalWounds - devWounds)
+					jointWoundDist[normWounds][devWounds] += pFinal
+				}
+			}
+		}
+	}
+
+	return jointWoundDist
 }
 
 // computeHitOutcomeDist returns the PMF of hit outcomes for a single attack.

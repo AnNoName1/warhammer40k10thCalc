@@ -490,6 +490,33 @@ func TestCalculateDamageCore_FeelNoPain_AppliedToDevastatingWounds(t *testing.T)
 	verifyDist(t, "DamageDist", resp.DamageDist, expectedDamageDist)
 }
 
+func TestComputeJointWoundDist(t *testing.T) {
+	// Certain: 0 auto-wounds, 1 normal hit. probNormalWound=0.5,
+	// probDevWound=0.25 -> pAnyWound=0.75 (miss=0.25), split 2:1 normal:devastating.
+	autoWoundNormalHitDist := AutoWoundNormalHitMatrix{
+		{0, 1.0}, // auto=0: normal=0 -> 0, normal=1 -> 1.0
+	}
+	bounds := hitBounds{maxN: 1, maxL: 0, maxHits: 1}
+
+	got := computeJointWoundDist(autoWoundNormalHitDist, bounds, 0.5, 0.25)
+
+	want := NormalDevastatingWoundMatrix{
+		{0.25, 0.25}, // normWounds=0: miss (devWounds=0) or devastating (devWounds=1)
+		{0.5, 0},     // normWounds=1: normal wound (devWounds=0)
+	}
+
+	if len(got) != len(want) {
+		t.Fatalf("got %d rows, want %d", len(got), len(want))
+	}
+	for nw := range want {
+		for dw := range want[nw] {
+			if math.Abs(got[nw][dw]-want[nw][dw]) > epsilonCore {
+				t.Errorf("[nw=%d][dw=%d]: got %v, want %v", nw, dw, got[nw][dw], want[nw][dw])
+			}
+		}
+	}
+}
+
 func TestComputeAutoWoundNormalHitDist(t *testing.T) {
 	// Exactly 1 attack, whose single die roll is 60% one normal hit or 40%
 	// one lethal hit. With attackCount pinned to 1, ComputeMultiAttackHitDistribution
