@@ -490,6 +490,27 @@ func TestCalculateDamageCore_FeelNoPain_AppliedToDevastatingWounds(t *testing.T)
 	verifyDist(t, "DamageDist", resp.DamageDist, expectedDamageDist)
 }
 
+func TestComputeTotalWoundsDist(t *testing.T) {
+	jointWoundDist := NormalDevastatingWoundMatrix{
+		{0.1, 0.2}, // nw=0: dw=0 (total=0), dw=1 (total=1)
+		{0.3, 0.4}, // nw=1: dw=0 (total=1), dw=1 (total=2, truncated by maxHits)
+	}
+	maxHits := 1 // deliberately truncates the [1][1]=0.4 entry (total=2 > maxHits)
+
+	got := computeTotalWoundsDist(jointWoundDist, maxHits)
+
+	want := []float64{0.1, 0.5} // total=0, total=1
+
+	if len(got) != len(want) {
+		t.Fatalf("got %d entries, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if math.Abs(got[i]-want[i]) > epsilonCore {
+			t.Errorf("totalWoundsDist[%d]: got %v, want %v", i, got[i], want[i])
+		}
+	}
+}
+
 func TestComputeFinalHitsDist(t *testing.T) {
 	autoWoundNormalHitDist := AutoWoundNormalHitMatrix{
 		{0.1, 0.2}, // auto=0: normal=0 (totalHits=0), normal=1 (totalHits=1)

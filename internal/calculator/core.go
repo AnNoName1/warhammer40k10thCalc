@@ -94,22 +94,7 @@ func (d *DamageCalculatorImpl) CalculateDamageCore(req CombatSimulationRequest) 
 
 	finalHitsDist := computeFinalHitsDist(finalAutoWoundNormalHitDist, bounds)
 
-	// ── 8. Total potential wounds dist (nw + dw) ──────────
-	totalWoundsDist := make([]float64, bounds.maxHits+1)
-	for nw := 0; nw <= bounds.maxHits; nw++ {
-		row := jointWoundDist[nw]
-		for dw := 0; dw <= bounds.maxHits; dw++ {
-			p := row[dw]
-			if p < 1e-15 {
-				continue
-			}
-
-			total := nw + dw
-			if total <= bounds.maxHits {
-				totalWoundsDist[total] += p
-			}
-		}
-	}
+	totalWoundsDist := computeTotalWoundsDist(jointWoundDist, bounds.maxHits)
 
 	// ── 10. Final unsaved dist (unsaved normal + devastating) ──────
 	// Compute by looping over joint
@@ -378,6 +363,27 @@ func computeFinalHitsDist(autoWoundNormalHitDist AutoWoundNormalHitMatrix, bound
 	}
 
 	return finalHitsDist
+}
+
+// computeTotalWoundsDist returns the total potential wounds distribution
+// (nw + dw) — normal wounds before save, plus devastating wounds.
+func computeTotalWoundsDist(jointWoundDist NormalDevastatingWoundMatrix, maxHits int) []float64 {
+	totalWoundsDist := make([]float64, maxHits+1)
+	for nw := 0; nw <= maxHits; nw++ {
+		row := jointWoundDist[nw]
+		for dw := 0; dw <= maxHits; dw++ {
+			p := row[dw]
+			if p < 1e-15 {
+				continue
+			}
+
+			total := nw + dw
+			if total <= maxHits {
+				totalWoundsDist[total] += p
+			}
+		}
+	}
+	return totalWoundsDist
 }
 
 // computeHitOutcomeDist returns the PMF of hit outcomes for a single attack.
