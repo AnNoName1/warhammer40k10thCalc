@@ -92,27 +92,7 @@ func (d *DamageCalculatorImpl) CalculateDamageCore(req CombatSimulationRequest) 
 	// ── 6. Joint distribution: normal-before-save × devastating ────
 	jointWoundDist := computeJointWoundDist(finalAutoWoundNormalHitDist, bounds, probNormalWound, probDevWound)
 
-	// ── Hits distribution (Total Hits = Normal + Lethal) ──
-	// ── FINAL TOTAL HIT DISTRIBUTION (Normal + Auto) ───────────────────
-
-	finalHitsDist := make([]float64, bounds.maxHits+1)
-
-	for autoWounds := 0; autoWounds <= bounds.maxL; autoWounds++ {
-		for normalHits := 0; normalHits <= bounds.maxN; normalHits++ {
-
-			probability :=
-				finalAutoWoundNormalHitDist[autoWounds][normalHits]
-
-			if probability < 1e-15 {
-				continue
-			}
-
-			totalHits := autoWounds + normalHits
-			if totalHits <= bounds.maxHits {
-				finalHitsDist[totalHits] += probability
-			}
-		}
-	}
+	finalHitsDist := computeFinalHitsDist(finalAutoWoundNormalHitDist, bounds)
 
 	// ── 8. Total potential wounds dist (nw + dw) ──────────
 	totalWoundsDist := make([]float64, bounds.maxHits+1)
@@ -376,6 +356,28 @@ func computeJointWoundDist(autoWoundNormalHitDist AutoWoundNormalHitMatrix, boun
 	}
 
 	return jointWoundDist
+}
+
+// computeFinalHitsDist returns the total hit distribution (Normal + Auto),
+// summing autoWounds (from Lethal Hits) and normalHits per state.
+func computeFinalHitsDist(autoWoundNormalHitDist AutoWoundNormalHitMatrix, bounds hitBounds) []float64 {
+	finalHitsDist := make([]float64, bounds.maxHits+1)
+
+	for autoWounds := 0; autoWounds <= bounds.maxL; autoWounds++ {
+		for normalHits := 0; normalHits <= bounds.maxN; normalHits++ {
+			probability := autoWoundNormalHitDist[autoWounds][normalHits]
+			if probability < 1e-15 {
+				continue
+			}
+
+			totalHits := autoWounds + normalHits
+			if totalHits <= bounds.maxHits {
+				finalHitsDist[totalHits] += probability
+			}
+		}
+	}
+
+	return finalHitsDist
 }
 
 // computeHitOutcomeDist returns the PMF of hit outcomes for a single attack.
