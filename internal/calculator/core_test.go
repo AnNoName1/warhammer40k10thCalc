@@ -490,6 +490,37 @@ func TestCalculateDamageCore_FeelNoPain_AppliedToDevastatingWounds(t *testing.T)
 	verifyDist(t, "DamageDist", resp.DamageDist, expectedDamageDist)
 }
 
+func TestComputeAutoWoundNormalHitDist(t *testing.T) {
+	// Exactly 1 attack, whose single die roll is 60% one normal hit or 40%
+	// one lethal hit. With attackCount pinned to 1, ComputeMultiAttackHitDistribution
+	// is the identity, so CollapseLethalHitsIntoAutoWounds just swaps
+	// [normal][lethal] -> [lethal(auto)][normal].
+	attackCountDist := map[int]float64{1: 1.0}
+	hitOutcomeDist := map[HitOutcome]float64{
+		{NormalHits: 1, LethalHits: 0}: 0.6,
+		{NormalHits: 0, LethalHits: 1}: 0.4,
+	}
+	bounds := computeHitBounds(attackCountDist, hitOutcomeDist)
+
+	got := computeAutoWoundNormalHitDist(hitOutcomeDist, attackCountDist, bounds)
+
+	want := AutoWoundNormalHitMatrix{
+		{0, 0.6}, // auto=0: normal=0 -> 0, normal=1 -> 0.6
+		{0.4, 0}, // auto=1: normal=0 -> 0.4, normal=1 -> 0
+	}
+
+	if len(got) != len(want) {
+		t.Fatalf("got %d auto-wound rows, want %d", len(got), len(want))
+	}
+	for auto := range want {
+		for normal := range want[auto] {
+			if math.Abs(got[auto][normal]-want[auto][normal]) > epsilonCore {
+				t.Errorf("[auto=%d][normal=%d]: got %v, want %v", auto, normal, got[auto][normal], want[auto][normal])
+			}
+		}
+	}
+}
+
 func TestComputeHitBounds(t *testing.T) {
 	attackCountDist := map[int]float64{0: 0.5, 2: 0.3, 5: 0.2} // maxAttacks = 5
 	hitOutcomeDist := map[HitOutcome]float64{

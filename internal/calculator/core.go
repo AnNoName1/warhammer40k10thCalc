@@ -93,54 +93,7 @@ func (d *DamageCalculatorImpl) CalculateDamageCore(req CombatSimulationRequest) 
 	}
 
 	// ── 7. Hits distribution (exact, discrete) ─────────────────────
-	// Determine per-attack bounds
-	maxNormalHitsPerAttack := bounds.maxNormalPerAttack
-	maxLethalHitsPerAttack := bounds.maxLethalPerAttack
-
-	// Build dense single-attack hit matrix
-	singleAttackHitMatrix := BuildSingleAttackHitMatrix(
-		hitOutcomeDist,
-		maxNormalHitsPerAttack,
-		maxLethalHitsPerAttack,
-	)
-
-	// Final collapsed hit distribution (auto wounds × normal hits)
-	finalAutoWoundNormalHitDist := make(AutoWoundNormalHitMatrix, bounds.maxL+1)
-	for i := range finalAutoWoundNormalHitDist {
-		finalAutoWoundNormalHitDist[i] = make([]float64, bounds.maxN+1)
-	}
-
-	// Loop over attack count distribution
-	for attackCount, attackProbability := range attackCountDist {
-		if attackProbability < 1e-15 {
-			continue
-		}
-
-		// Exact joint hit distribution for this attack count
-		jointHitMatrix := ComputeMultiAttackHitDistribution(
-			singleAttackHitMatrix,
-			attackCount,
-			maxNormalHitsPerAttack,
-			maxLethalHitsPerAttack,
-			bounds.maxN,
-			bounds.maxL,
-		)
-
-		// Collapse lethal → auto wounds
-		autoWoundNormalHitMatrix :=
-			CollapseLethalHitsIntoAutoWounds(jointHitMatrix, bounds.maxN, bounds.maxL)
-
-		// Accumulate weighted result
-		for auto := 0; auto <= bounds.maxL; auto++ {
-			for normal := 0; normal <= bounds.maxN; normal++ {
-				p := autoWoundNormalHitMatrix[auto][normal]
-				if p > 0 {
-					finalAutoWoundNormalHitDist[auto][normal] +=
-						attackProbability * p
-				}
-			}
-		}
-	}
+	finalAutoWoundNormalHitDist := computeAutoWoundNormalHitDist(hitOutcomeDist, attackCountDist, bounds)
 
 	// ── WOUND & DEVASTATING WOUND RESOLUTION ───────────────────────────
 
@@ -359,6 +312,56 @@ func computeHitBounds(attackCountDist map[int]float64, hitOutcomeDist map[HitOut
 		maxL:               maxAttacks * maxLper,
 		maxHits:            maxAttacks * maxPerTotal,
 	}
+}
+
+// computeAutoWoundNormalHitDist returns the final collapsed hit distribution
+// (auto wounds × normal hits), summed across every possible attack count.
+func computeAutoWoundNormalHitDist(hitOutcomeDist map[HitOutcome]float64, attackCountDist map[int]float64, bounds hitBounds) AutoWoundNormalHitMatrix {
+	// Build dense single-attack hit matrix
+	singleAttackHitMatrix := BuildSingleAttackHitMatrix(
+		hitOutcomeDist,
+		bounds.maxNormalPerAttack,
+		bounds.maxLethalPerAttack,
+	)
+
+	finalAutoWoundNormalHitDist := make(AutoWoundNormalHitMatrix, bounds.maxL+1)
+	for i := range finalAutoWoundNormalHitDist {
+		finalAutoWoundNormalHitDist[i] = make([]float64, bounds.maxN+1)
+	}
+
+	// Loop over attack count distribution
+	for attackCount, attackProbability := range attackCountDist {
+		if attackProbability < 1e-15 {
+			continue
+		}
+
+		// Exact joint hit distribution for this attack count
+		jointHitMatrix := ComputeMultiAttackHitDistribution(
+			singleAttackHitMatrix,
+			attackCount,
+			bounds.maxNormalPerAttack,
+			bounds.maxLethalPerAttack,
+			bounds.maxN,
+			bounds.maxL,
+		)
+
+		// Collapse lethal → auto wounds
+		autoWoundNormalHitMatrix :=
+			CollapseLethalHitsIntoAutoWounds(jointHitMatrix, bounds.maxN, bounds.maxL)
+
+		// Accumulate weighted result
+		for auto := 0; auto <= bounds.maxL; auto++ {
+			for normal := 0; normal <= bounds.maxN; normal++ {
+				p := autoWoundNormalHitMatrix[auto][normal]
+				if p > 0 {
+					finalAutoWoundNormalHitDist[auto][normal] +=
+						attackProbability * p
+				}
+			}
+		}
+	}
+
+	return finalAutoWoundNormalHitDist
 }
 
 // computeHitOutcomeDist returns the PMF of hit outcomes for a single attack.
