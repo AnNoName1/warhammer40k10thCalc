@@ -93,7 +93,8 @@ func Apply(h http.Handler, middlewares ...Middleware) http.Handler {
 	return h
 }
 
-// BuildPublicHandler собирает и оборачивает публичную ветку
+// BuildPublicHandler assembles the unauthenticated route branch (health
+// checks and Swagger docs), wrapped in the given middleware chain.
 func BuildPublicHandler(middlewares ...Middleware) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/alive", HealthCheck)
@@ -205,27 +206,24 @@ func run(ctx context.Context) error {
 
 	calcCore := &calculator.DamageCalculatorImpl{}
 
-	// 1. Initialize Public-facing middleware (Auth-free zones like Healthchecks or Docs)
+	// Auth-free: health checks and Swagger docs.
 	publicMW := []Middleware{
 		// middleware.RateLimitMiddleware,
 	}
 
-	// 2. Initialize Protected middleware (Business logic, logging, and panic recovery)
 	protectedMW := []Middleware{
 		middleware.RecoverMiddleware(logger),
 		middleware.LoggingMiddleware(logger),
 	}
 
-	// 3. Initialize Global middleware (Applied to every single incoming request)
+	// Applies to every incoming request, including public ones.
 	globalMW := []Middleware{
 		middleware.CORSMiddleware(cfg.Origins),
 	}
 
-	// 4. Build isolated route branches
 	publicHandler := BuildPublicHandler(publicMW...)
 	protectedHandler := BuildProtectedHandler(calcCore, logger, protectedMW...)
 
-	// 5. Assemble the root router with global middleware wrapper
 	handler := BuildRootHandler(publicHandler, protectedHandler, globalMW...)
 
 	logger.Info("server starting",
