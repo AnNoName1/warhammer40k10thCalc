@@ -61,25 +61,8 @@ func (d *DamageCalculatorImpl) CalculateDamageCore(req CombatSimulationRequest) 
 	)
 
 	// ── 2. Single-attack hit outcome distribution (DISCRETE) ───────
-	var hitOutcomeDist map[HitOutcome]float64
+	hitOutcomeDist := computeHitOutcomeDist(req)
 
-	if req.Attacker.Torrent {
-		// Torrent: Auto-hits bypass the hit roll logic entirely.
-		// They cannot trigger Critical Hit effects (Lethal/Sustained).
-		hitOutcomeDist = map[HitOutcome]float64{
-			{NormalHits: 1, LethalHits: 0}: 1.0,
-		}
-	} else {
-		// Standard Hit Roll logic
-		hitOutcomeDist = CalculateSingleHitDistribution(
-			req.Attacker.BS,
-			req.Settings.HitReroll,
-			req.Settings.HitModifier,
-			req.Attacker.LethalHits,
-			req.Attacker.SustainedHits,
-			req.Settings.CriticalHitThreshold,
-		)
-	}
 	// ── 3. Wound probabilities (per wound roll) ────────────────────
 	probNormalWound, probDevWound := CalculateWoundProbability(
 		req.Attacker.Strength,
@@ -360,6 +343,27 @@ func (d *DamageCalculatorImpl) CalculateDamageCore(req CombatSimulationRequest) 
 		vectorToMap(totalDamageVec),
 		vectorToMap(finalKilledSlice),
 	), nil
+}
+
+// computeHitOutcomeDist returns the PMF of hit outcomes for a single attack.
+func computeHitOutcomeDist(req CombatSimulationRequest) map[HitOutcome]float64 {
+	if req.Attacker.Torrent {
+		// Torrent: Auto-hits bypass the hit roll logic entirely.
+		// They cannot trigger Critical Hit effects (Lethal/Sustained).
+		return map[HitOutcome]float64{
+			{NormalHits: 1, LethalHits: 0}: 1.0,
+		}
+	}
+
+	// Standard Hit Roll logic
+	return CalculateSingleHitDistribution(
+		req.Attacker.BS,
+		req.Settings.HitReroll,
+		req.Settings.HitModifier,
+		req.Attacker.LethalHits,
+		req.Attacker.SustainedHits,
+		req.Settings.CriticalHitThreshold,
+	)
 }
 
 // --- HELPER FUNCTIONS ---

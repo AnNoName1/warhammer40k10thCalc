@@ -490,6 +490,51 @@ func TestCalculateDamageCore_FeelNoPain_AppliedToDevastatingWounds(t *testing.T)
 	verifyDist(t, "DamageDist", resp.DamageDist, expectedDamageDist)
 }
 
+func TestComputeHitOutcomeDist(t *testing.T) {
+	t.Run("Torrent bypasses the hit roll entirely", func(t *testing.T) {
+		req := CombatSimulationRequest{
+			Attacker: AttackerProfile{
+				Torrent: true,
+				BS:      6, // irrelevant under Torrent
+			},
+		}
+
+		got := computeHitOutcomeDist(req)
+
+		want := HitOutcome{NormalHits: 1, LethalHits: 0}
+		if len(got) != 1 || got[want] != 1.0 {
+			t.Errorf("Torrent hit outcome = %v, want {%v: 1.0}", got, want)
+		}
+	})
+
+	t.Run("Standard hit roll delegates to CalculateSingleHitDistribution", func(t *testing.T) {
+		req := CombatSimulationRequest{
+			Attacker: AttackerProfile{
+				BS:            3,
+				LethalHits:    true,
+				SustainedHits: 1,
+			},
+			Settings: SimulationSettings{
+				HitReroll:            RerollOnes,
+				HitModifier:          1,
+				CriticalHitThreshold: 6,
+			},
+		}
+
+		got := computeHitOutcomeDist(req)
+		want := CalculateSingleHitDistribution(3, RerollOnes, 1, true, 1, 6)
+
+		if len(got) != len(want) {
+			t.Fatalf("got %d outcomes, want %d", len(got), len(want))
+		}
+		for outcome, wantP := range want {
+			if math.Abs(got[outcome]-wantP) > epsilonCore {
+				t.Errorf("outcome %v: got %v, want %v", outcome, got[outcome], wantP)
+			}
+		}
+	})
+}
+
 func intPtr(i int) *int {
 	return &i
 }
