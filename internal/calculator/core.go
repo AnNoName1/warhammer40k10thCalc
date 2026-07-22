@@ -84,40 +84,18 @@ func (d *DamageCalculatorImpl) CalculateDamageCore(req CombatSimulationRequest) 
 	)
 
 	// ── 5. Max attacks for sizing ──────────────────────────────────
-	maxAttacks := 0
-	for n := range attackCountDist {
-		if n > maxAttacks {
-			maxAttacks = n
-		}
-	}
-
-	// Compute max per attack for tighter bounds
-	maxNper, maxLper, maxPerTotal := 0, 0, 0
-	for o := range hitOutcomeDist {
-		if o.NormalHits > maxNper {
-			maxNper = o.NormalHits
-		}
-		if o.LethalHits > maxLper {
-			maxLper = o.LethalHits
-		}
-		if o.NormalHits+o.LethalHits > maxPerTotal {
-			maxPerTotal = o.NormalHits + o.LethalHits
-		}
-	}
-	maxN := maxAttacks * maxNper
-	maxL := maxAttacks * maxLper
-	maxHits := maxAttacks * maxPerTotal // Tighter than maxN + maxL
+	bounds := computeHitBounds(attackCountDist, hitOutcomeDist)
 
 	// ── 6. Joint distribution: normal-before-save × devastating ────
-	jointNormalBeforeSave_Dev := make([][]float64, maxHits+1)
+	jointNormalBeforeSave_Dev := make([][]float64, bounds.maxHits+1)
 	for i := range jointNormalBeforeSave_Dev {
-		jointNormalBeforeSave_Dev[i] = make([]float64, maxHits+1)
+		jointNormalBeforeSave_Dev[i] = make([]float64, bounds.maxHits+1)
 	}
 
 	// ── 7. Hits distribution (exact, discrete) ─────────────────────
 	// Determine per-attack bounds
-	maxNormalHitsPerAttack := maxNper
-	maxLethalHitsPerAttack := maxLper
+	maxNormalHitsPerAttack := bounds.maxNormalPerAttack
+	maxLethalHitsPerAttack := bounds.maxLethalPerAttack
 
 	// Build dense single-attack hit matrix
 	singleAttackHitMatrix := BuildSingleAttackHitMatrix(
@@ -127,9 +105,9 @@ func (d *DamageCalculatorImpl) CalculateDamageCore(req CombatSimulationRequest) 
 	)
 
 	// Final collapsed hit distribution (auto wounds × normal hits)
-	finalAutoWoundNormalHitDist := make(AutoWoundNormalHitMatrix, maxL+1)
+	finalAutoWoundNormalHitDist := make(AutoWoundNormalHitMatrix, bounds.maxL+1)
 	for i := range finalAutoWoundNormalHitDist {
-		finalAutoWoundNormalHitDist[i] = make([]float64, maxN+1)
+		finalAutoWoundNormalHitDist[i] = make([]float64, bounds.maxN+1)
 	}
 
 	// Loop over attack count distribution
@@ -144,17 +122,17 @@ func (d *DamageCalculatorImpl) CalculateDamageCore(req CombatSimulationRequest) 
 			attackCount,
 			maxNormalHitsPerAttack,
 			maxLethalHitsPerAttack,
-			maxN,
-			maxL,
+			bounds.maxN,
+			bounds.maxL,
 		)
 
 		// Collapse lethal → auto wounds
 		autoWoundNormalHitMatrix :=
-			CollapseLethalHitsIntoAutoWounds(jointHitMatrix, maxN, maxL)
+			CollapseLethalHitsIntoAutoWounds(jointHitMatrix, bounds.maxN, bounds.maxL)
 
 		// Accumulate weighted result
-		for auto := 0; auto <= maxL; auto++ {
-			for normal := 0; normal <= maxN; normal++ {
+		for auto := 0; auto <= bounds.maxL; auto++ {
+			for normal := 0; normal <= bounds.maxN; normal++ {
 				p := autoWoundNormalHitMatrix[auto][normal]
 				if p > 0 {
 					finalAutoWoundNormalHitDist[auto][normal] +=
@@ -172,11 +150,11 @@ func (d *DamageCalculatorImpl) CalculateDamageCore(req CombatSimulationRequest) 
 	if pAnyWound > 0 {
 		pDevCond = probDevWound / pAnyWound
 	}
-	binomAny := precomputeBinomials(maxN, pAnyWound)
-	binomDev := precomputeBinomials(maxN, pDevCond) // max wounds <= maxN
+	binomAny := precomputeBinomials(bounds.maxN, pAnyWound)
+	binomDev := precomputeBinomials(bounds.maxN, pDevCond) // max wounds <= maxN
 
-	for autoWounds := 0; autoWounds <= maxL; autoWounds++ {
-		for normalHits := 0; normalHits <= maxN; normalHits++ {
+	for autoWounds := 0; autoWounds <= bounds.maxL; autoWounds++ {
+		for normalHits := 0; normalHits <= bounds.maxN; normalHits++ {
 			pState := finalAutoWoundNormalHitDist[autoWounds][normalHits]
 			if pState < 1e-15 {
 				continue
@@ -211,10 +189,10 @@ func (d *DamageCalculatorImpl) CalculateDamageCore(req CombatSimulationRequest) 
 	// ── Hits distribution (Total Hits = Normal + Lethal) ──
 	// ── FINAL TOTAL HIT DISTRIBUTION (Normal + Auto) ───────────────────
 
-	finalHitsDist := make([]float64, maxHits+1)
+	finalHitsDist := make([]float64, bounds.maxHits+1)
 
-	for autoWounds := 0; autoWounds <= maxL; autoWounds++ {
-		for normalHits := 0; normalHits <= maxN; normalHits++ {
+	for autoWounds := 0; autoWounds <= bounds.maxL; autoWounds++ {
+		for normalHits := 0; normalHits <= bounds.maxN; normalHits++ {
 
 			probability :=
 				finalAutoWoundNormalHitDist[autoWounds][normalHits]
@@ -224,44 +202,34 @@ func (d *DamageCalculatorImpl) CalculateDamageCore(req CombatSimulationRequest) 
 			}
 
 			totalHits := autoWounds + normalHits
-			if totalHits <= maxHits {
+			if totalHits <= bounds.maxHits {
 				finalHitsDist[totalHits] += probability
 			}
 		}
 	}
 
 	// ── 8. Total potential wounds dist (nw + dw) ──────────
-	totalWoundsDist := make([]float64, maxHits+1)
-	for nw := 0; nw <= maxHits; nw++ {
+	totalWoundsDist := make([]float64, bounds.maxHits+1)
+	for nw := 0; nw <= bounds.maxHits; nw++ {
 		row := jointNormalBeforeSave_Dev[nw]
-		for dw := 0; dw <= maxHits; dw++ {
+		for dw := 0; dw <= bounds.maxHits; dw++ {
 			p := row[dw]
 			if p < 1e-15 {
 				continue
 			}
 
 			total := nw + dw
-			if total <= maxHits {
+			if total <= bounds.maxHits {
 				totalWoundsDist[total] += p
 			}
 		}
 	}
 
-	// ── 9. Marginal devastating dist ───────────────────────────────
-	devastatingDist := make([]float64, maxHits+1)
-	for dw := 0; dw <= maxHits; dw++ {
-		colSum := 0.0
-		for nw := 0; nw <= maxHits; nw++ {
-			colSum += jointNormalBeforeSave_Dev[nw][dw]
-		}
-		devastatingDist[dw] = colSum
-	}
-
 	// ── 10. Final unsaved dist (unsaved normal + devastating) ──────
 	// Compute by looping over joint
-	finalUnsavedDist := make([]float64, maxHits+1)
-	for nw := 0; nw <= maxHits; nw++ {
-		for dw := 0; dw <= maxHits; dw++ {
+	finalUnsavedDist := make([]float64, bounds.maxHits+1)
+	for nw := 0; nw <= bounds.maxHits; nw++ {
+		for dw := 0; dw <= bounds.maxHits; dw++ {
 			pJoint := jointNormalBeforeSave_Dev[nw][dw]
 			if pJoint < 1e-15 {
 				continue
@@ -286,15 +254,15 @@ func (d *DamageCalculatorImpl) CalculateDamageCore(req CombatSimulationRequest) 
 
 	// NEW: Total Damage Accumulators
 	maxD := GetMaxFromDice(req.Attacker.Damage)
-	totalDamageVec := make([]float64, maxHits*maxD+1)
+	totalDamageVec := make([]float64, bounds.maxHits*maxD+1)
 	// Pre-calculate convolutions for each possible total hit count [0...maxHits]
 	// damageConvs[hits][damage]
-	damageConvs := make([][]float64, maxHits+1)
+	damageConvs := make([][]float64, bounds.maxHits+1)
 	damageConvs[0] = []float64{1.0}
 
-	for nw := 0; nw <= maxHits; nw++ {
+	for nw := 0; nw <= bounds.maxHits; nw++ {
 		row := jointNormalBeforeSave_Dev[nw]
-		for dw := 0; dw <= maxHits; dw++ {
+		for dw := 0; dw <= bounds.maxHits; dw++ {
 			pJoint := row[dw]
 			if pJoint < 1e-12 {
 				continue
@@ -343,6 +311,54 @@ func (d *DamageCalculatorImpl) CalculateDamageCore(req CombatSimulationRequest) 
 		vectorToMap(totalDamageVec),
 		vectorToMap(finalKilledSlice),
 	), nil
+}
+
+// hitBounds carries the truncation bounds used to size every dense
+// matrix/slice downstream. maxHits is tighter than maxN+maxL because a
+// single attack can't simultaneously produce its worst-case normal AND
+// worst-case lethal outcome.
+type hitBounds struct {
+	maxAttacks         int
+	maxNormalPerAttack int
+	maxLethalPerAttack int
+	maxN               int // maxAttacks * maxNormalPerAttack
+	maxL               int // maxAttacks * maxLethalPerAttack
+	maxHits            int
+}
+
+// computeHitBounds derives the sizing bounds for the hit/wound/damage
+// matrices from the attack-count and single-attack hit-outcome
+// distributions: the largest attack count that can occur, and the largest
+// normal/lethal/total hit outcome a single attack can produce.
+func computeHitBounds(attackCountDist map[int]float64, hitOutcomeDist map[HitOutcome]float64) hitBounds {
+	maxAttacks := 0
+	for n := range attackCountDist {
+		if n > maxAttacks {
+			maxAttacks = n
+		}
+	}
+
+	maxNper, maxLper, maxPerTotal := 0, 0, 0
+	for o := range hitOutcomeDist {
+		if o.NormalHits > maxNper {
+			maxNper = o.NormalHits
+		}
+		if o.LethalHits > maxLper {
+			maxLper = o.LethalHits
+		}
+		if o.NormalHits+o.LethalHits > maxPerTotal {
+			maxPerTotal = o.NormalHits + o.LethalHits
+		}
+	}
+
+	return hitBounds{
+		maxAttacks:         maxAttacks,
+		maxNormalPerAttack: maxNper,
+		maxLethalPerAttack: maxLper,
+		maxN:               maxAttacks * maxNper,
+		maxL:               maxAttacks * maxLper,
+		maxHits:            maxAttacks * maxPerTotal,
+	}
 }
 
 // computeHitOutcomeDist returns the PMF of hit outcomes for a single attack.

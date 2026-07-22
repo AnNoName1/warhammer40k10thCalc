@@ -490,6 +490,30 @@ func TestCalculateDamageCore_FeelNoPain_AppliedToDevastatingWounds(t *testing.T)
 	verifyDist(t, "DamageDist", resp.DamageDist, expectedDamageDist)
 }
 
+func TestComputeHitBounds(t *testing.T) {
+	attackCountDist := map[int]float64{0: 0.5, 2: 0.3, 5: 0.2} // maxAttacks = 5
+	hitOutcomeDist := map[HitOutcome]float64{
+		{NormalHits: 1, LethalHits: 0}: 0.5, // sum 1
+		{NormalHits: 0, LethalHits: 2}: 0.3, // sum 2, maxLethalPerAttack
+		{NormalHits: 1, LethalHits: 1}: 0.2, // sum 2, ties maxPerTotal
+	}
+
+	got := computeHitBounds(attackCountDist, hitOutcomeDist)
+
+	want := hitBounds{
+		maxAttacks:         5,
+		maxNormalPerAttack: 1,
+		maxLethalPerAttack: 2,
+		maxN:               5,  // 5 * 1
+		maxL:               10, // 5 * 2
+		maxHits:            10, // 5 * 2 (tighter than maxN+maxL = 15)
+	}
+
+	if got != want {
+		t.Errorf("computeHitBounds() = %+v, want %+v", got, want)
+	}
+}
+
 func TestComputeHitOutcomeDist(t *testing.T) {
 	t.Run("Torrent bypasses the hit roll entirely", func(t *testing.T) {
 		req := CombatSimulationRequest{
