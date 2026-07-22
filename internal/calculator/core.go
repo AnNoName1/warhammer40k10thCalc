@@ -297,8 +297,10 @@ func (d *DamageCalculatorImpl) CalculateDamageCore(req CombatSimulationRequest) 
 	}
 
 	// ── 11. Damage allocation ──────────────────────────────────────
-	dmgWithFnp := _calculateDamageDistribution(req.Attacker.Damage, req.Target.FeelNoPain) // FNP applied here
-	dmgNoFnp := _calculateDamageDistribution(req.Attacker.Damage, req.Target.FeelNoPain)   // FNP for devastating - latest rules
+	// TODO: Some units grant Feel No Pain that explicitly excludes devastating
+	// wound damage. Not modeled — FNP is currently applied uniformly to both
+	// normal and devastating damage via dmgDist.
+	dmgDist := _calculateDamageDistribution(req.Attacker.Damage, req.Target.FeelNoPain)
 	finalKilledSlice := make([]float64, *req.Target.Count+1)
 
 	// NEW: Total Damage Accumulators
@@ -325,7 +327,7 @@ func (d *DamageCalculatorImpl) CalculateDamageCore(req CombatSimulationRequest) 
 				}
 				resolveDamageToSlice(
 					u, dw,
-					dmgWithFnp, dmgNoFnp,
+					dmgDist, dmgDist,
 					req.Target.WoundsPerModel,
 					*req.Target.Count,
 					finalKilledSlice,
@@ -338,7 +340,7 @@ func (d *DamageCalculatorImpl) CalculateDamageCore(req CombatSimulationRequest) 
 					prev := damageConvs[totalUnsaved-1]
 					curr := make([]float64, len(prev)+maxD)
 					for i, pPrev := range prev {
-						for dVal, pD := range dmgNoFnp {
+						for dVal, pD := range dmgDist {
 							curr[i+dVal] += pPrev * pD
 						}
 					}
