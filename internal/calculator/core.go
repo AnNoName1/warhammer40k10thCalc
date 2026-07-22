@@ -96,25 +96,7 @@ func (d *DamageCalculatorImpl) CalculateDamageCore(req CombatSimulationRequest) 
 
 	totalWoundsDist := computeTotalWoundsDist(jointWoundDist, bounds.maxHits)
 
-	// ── 10. Final unsaved dist (unsaved normal + devastating) ──────
-	// Compute by looping over joint
-	finalUnsavedDist := make([]float64, bounds.maxHits+1)
-	for nw := 0; nw <= bounds.maxHits; nw++ {
-		for dw := 0; dw <= bounds.maxHits; dw++ {
-			pJoint := jointWoundDist[nw][dw]
-			if pJoint < 1e-15 {
-				continue
-			}
-			unsavedNormal := getBinomialVector(nw, probSaveFailed)
-			for u, pU := range unsavedNormal {
-				if pU < 1e-15 {
-					continue
-				}
-				totalUnsaved := u + dw
-				finalUnsavedDist[totalUnsaved] += pJoint * pU
-			}
-		}
-	}
+	finalUnsavedDist := computeFinalUnsavedDist(jointWoundDist, bounds.maxHits, probSaveFailed)
 
 	// ── 11. Damage allocation ──────────────────────────────────────
 	// TODO: Some units grant Feel No Pain that explicitly excludes devastating
@@ -384,6 +366,30 @@ func computeTotalWoundsDist(jointWoundDist NormalDevastatingWoundMatrix, maxHits
 		}
 	}
 	return totalWoundsDist
+}
+
+// computeFinalUnsavedDist returns the distribution of unsaved wounds
+// (unsaved normal wounds + devastating wounds, which bypass the save roll
+// entirely). Compute by looping over joint.
+func computeFinalUnsavedDist(jointWoundDist NormalDevastatingWoundMatrix, maxHits int, probSaveFailed float64) []float64 {
+	finalUnsavedDist := make([]float64, maxHits+1)
+	for nw := 0; nw <= maxHits; nw++ {
+		for dw := 0; dw <= maxHits; dw++ {
+			pJoint := jointWoundDist[nw][dw]
+			if pJoint < 1e-15 {
+				continue
+			}
+			unsavedNormal := getBinomialVector(nw, probSaveFailed)
+			for u, pU := range unsavedNormal {
+				if pU < 1e-15 {
+					continue
+				}
+				totalUnsaved := u + dw
+				finalUnsavedDist[totalUnsaved] += pJoint * pU
+			}
+		}
+	}
+	return finalUnsavedDist
 }
 
 // computeHitOutcomeDist returns the PMF of hit outcomes for a single attack.
