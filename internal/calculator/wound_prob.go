@@ -36,67 +36,93 @@ import (
 //
 // Returns:
 // (float64, float64): Probability of a normal wound and a devastating wound.
-
 func CalculateWoundProbability(s int, t int, rerollType RerollType, woundModifier int, devastatingWounds bool,
 	CriticalWoundThreshold int) (float64, float64) {
-	// Constants
 	const oneSixth = 1.0 / 6.0
 
-	// 1. Determine the required Wound Roll (Target Wound Roll)
-	var targetRoll int
-	if s*2 <= t {
-		targetRoll = 6
-	} else if s < t {
-		targetRoll = 5
-	} else if s >= t*2 {
-		targetRoll = 2
-	} else if s > t {
-		targetRoll = 3
-	} else {
-		targetRoll = 4
-	}
+	finalTargetRoll := clampWoundTarget(woundRollTarget(s, t), woundModifier)
+	woundChance := chanceOfRollingAtLeast(finalTargetRoll)
 
-	// 2. Apply the modifier and clamp between 2+ and 6+
-	finalTargetRoll := float64(targetRoll) - float64(woundModifier)
-	finalTargetRoll = math.Max(2.0, math.Min(6.0, finalTargetRoll))
+	critChance := chanceOfRollingAtLeast(float64(sanitizeCriticalThreshold(CriticalWoundThreshold)))
 
-	// 1. Calculate Base Success Chance (Normal math)
-	woundChance := (7.0 - finalTargetRoll) / 6.0
-
-	// 2. Calculate Critical Success Chance
-	if CriticalWoundThreshold < 2 || CriticalWoundThreshold > 6 {
-		CriticalWoundThreshold = 6
-	}
-	critChance := (7.0 - float64(CriticalWoundThreshold)) / 6.0
-
-	// 3. APPLY RULE: Critical Wounds are always successful
-	// If critChance is higher than woundChance (e.g., Anti-2+ vs T12),
-	// the woundChance must be elevated to the critChance.
+	// Critical Wounds are always successful: if critChance is higher than
+	// woundChance (e.g., Anti-2+ vs T12), woundChance is elevated to match.
 	if critChance > woundChance {
 		woundChance = critChance
 	}
 
 	missChance := 1.0 - woundChance
 
-	// 4. Process Rerolls
 	switch rerollType {
 	case RerollOnes:
-		// Rerolling a 1 (1/6) gives another chance to hit wound or crit
-		woundChance += oneSixth * woundChance
-		critChance += oneSixth * critChance
+		// Only a natural 1 can be rerolled.
+		woundChance = applyRerollBonus(woundChance, oneSixth)
+		critChance = applyRerollBonus(critChance, oneSixth)
 	case RerollFail:
-		// Rerolling all fails (missChance) gives another chance to hit wound or crit
-		woundChance += missChance * woundChance
-		critChance += missChance * critChance
+		// Every failed roll can be rerolled.
+		woundChance = applyRerollBonus(woundChance, missChance)
+		critChance = applyRerollBonus(critChance, missChance)
 	}
 
-	// 5. Process [DEVASTATING WOUNDS]
-	devastatingWoundChance := 0.0
-	if devastatingWounds {
-		devastatingWoundChance = critChance
-		woundChance -= devastatingWoundChance
-		woundChance = math.Max(0.0, woundChance)
-	}
+	woundChance, devastatingWoundChance := splitDevastatingWounds(woundChance, critChance, devastatingWounds)
 
 	return woundChance, devastatingWoundChance
+}
+
+// woundRollTarget returns the unmodified D6 roll needed to wound. Per the
+// core rules Strength-vs-Toughness table: S >= 2T wounds on 2+, S > T on
+// 3+, S == T on 4+, S < T on 5+, S <= T/2 on 6+.
+func woundRollTarget(s, t int) int {
+	switch {
+	case s*2 <= t:
+		return 6
+	case s < t:
+		return 5
+	case s >= t*2:
+		return 2
+	case s > t:
+		return 3
+	default:
+		return 4
+	}
+}
+
+// clampWoundTarget applies the wound-roll modifier and clamps to the core
+// rules' legal target range: no roll can need better than 2+ or worse than
+// 6+ to succeed.
+func clampWoundTarget(targetRoll, modifier int) float64 {
+	v := float64(targetRoll) - float64(modifier)
+	return math.Max(2.0, math.Min(6.0, v))
+}
+
+// chanceOfRollingAtLeast returns P(roll >= target) on a fair D6.
+func chanceOfRollingAtLeast(target float64) float64 {
+	return (7.0 - target) / 6.0
+}
+
+// sanitizeCriticalThreshold resets an out-of-range threshold to the core
+// rules default: critical only on a natural 6.
+func sanitizeCriticalThreshold(v int) int {
+	if v < 2 || v > 6 {
+		return 6
+	}
+	return v
+}
+
+// applyRerollBonus adds the probability of succeeding on a reroll: a second
+// attempt happens with probability retryChance, and succeeds at the same
+// rate as the original roll, so the bonus is retryChance*chance.
+func applyRerollBonus(chance, retryChance float64) float64 {
+	return chance + retryChance*chance
+}
+
+// splitDevastatingWounds separates the devastating-wound share out of the
+// total wound chance. Per the core rules, [DEVASTATING WOUNDS] wounds
+// bypass the save roll entirely, so they must be resolved separately from
+// ordinary wounds rather than folded into woundChance.
+func splitDevastatingWounds(woundChance, critChance float64, devastatingWounds bool) (normal, devastating float64) {
+	if !devastatingWounds {
+		return woundChance, 0.0
+	}
+	return math.Max(0.0, woundChance-critChance), critChance
 }
