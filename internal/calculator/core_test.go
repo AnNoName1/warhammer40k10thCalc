@@ -490,6 +490,235 @@ func TestCalculateDamageCore_FeelNoPain_AppliedToDevastatingWounds(t *testing.T)
 	verifyDist(t, "DamageDist", resp.DamageDist, expectedDamageDist)
 }
 
+func TestComputeDamageAllocation(t *testing.T) {
+	// Certain: 1 normal wound before save, save always fails (probSaveFailed=1.0).
+	// Fixed 2 damage vs a single 5-wound model: never kills outright, always
+	// deals exactly 2 damage.
+	jointWoundDist := NormalDevastatingWoundMatrix{
+		{0, 0},
+		{1.0, 0},
+	}
+	maxHits := 1
+
+	killed, damageVec := computeDamageAllocation(
+		jointWoundDist, maxHits, 1.0,
+		DiceRoll{Modifier: 2}, nil,
+		5, 1,
+	)
+
+	wantKilled := []float64{1.0, 0}    // 0 models destroyed, with certainty
+	wantDamage := []float64{0, 0, 1.0} // 2 total damage, with certainty
+
+	if len(killed) != len(wantKilled) {
+		t.Fatalf("killed: got %d entries, want %d", len(killed), len(wantKilled))
+	}
+	for i := range wantKilled {
+		if math.Abs(killed[i]-wantKilled[i]) > epsilonCore {
+			t.Errorf("killed[%d]: got %v, want %v", i, killed[i], wantKilled[i])
+		}
+	}
+
+	if len(damageVec) != len(wantDamage) {
+		t.Fatalf("damageVec: got %d entries, want %d", len(damageVec), len(wantDamage))
+	}
+	for i := range wantDamage {
+		if math.Abs(damageVec[i]-wantDamage[i]) > epsilonCore {
+			t.Errorf("damageVec[%d]: got %v, want %v", i, damageVec[i], wantDamage[i])
+		}
+	}
+}
+
+func TestComputeFinalUnsavedDist(t *testing.T) {
+	// Certain: 1 normal wound before save, 0 devastating. probSaveFailed=0.6.
+	jointWoundDist := NormalDevastatingWoundMatrix{
+		{0, 0},   // nw=0
+		{1.0, 0}, // nw=1: dw=0 -> 1.0
+	}
+	maxHits := 1
+
+	got := computeFinalUnsavedDist(jointWoundDist, maxHits, 0.6)
+
+	want := []float64{0.4, 0.6} // 0 unsaved (40%) or 1 unsaved (60%)
+
+	if len(got) != len(want) {
+		t.Fatalf("got %d entries, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if math.Abs(got[i]-want[i]) > epsilonCore {
+			t.Errorf("finalUnsavedDist[%d]: got %v, want %v", i, got[i], want[i])
+		}
+	}
+}
+
+func TestComputeTotalWoundsDist(t *testing.T) {
+	jointWoundDist := NormalDevastatingWoundMatrix{
+		{0.1, 0.2}, // nw=0: dw=0 (total=0), dw=1 (total=1)
+		{0.3, 0.4}, // nw=1: dw=0 (total=1), dw=1 (total=2, truncated by maxHits)
+	}
+	maxHits := 1 // deliberately truncates the [1][1]=0.4 entry (total=2 > maxHits)
+
+	got := computeTotalWoundsDist(jointWoundDist, maxHits)
+
+	want := []float64{0.1, 0.5} // total=0, total=1
+
+	if len(got) != len(want) {
+		t.Fatalf("got %d entries, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if math.Abs(got[i]-want[i]) > epsilonCore {
+			t.Errorf("totalWoundsDist[%d]: got %v, want %v", i, got[i], want[i])
+		}
+	}
+}
+
+func TestComputeFinalHitsDist(t *testing.T) {
+	autoWoundNormalHitDist := AutoWoundNormalHitMatrix{
+		{0.1, 0.2}, // auto=0: normal=0 (totalHits=0), normal=1 (totalHits=1)
+		{0.3, 0.4}, // auto=1: normal=0 (totalHits=1), normal=1 (totalHits=2)
+	}
+	bounds := hitBounds{maxN: 1, maxL: 1, maxHits: 2}
+
+	got := computeFinalHitsDist(autoWoundNormalHitDist, bounds)
+
+	want := []float64{0.1, 0.5, 0.4} // totalHits=0,1,2
+
+	if len(got) != len(want) {
+		t.Fatalf("got %d entries, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if math.Abs(got[i]-want[i]) > epsilonCore {
+			t.Errorf("finalHitsDist[%d]: got %v, want %v", i, got[i], want[i])
+		}
+	}
+}
+
+func TestComputeJointWoundDist(t *testing.T) {
+	// Certain: 0 auto-wounds, 1 normal hit. probNormalWound=0.5,
+	// probDevWound=0.25 -> pAnyWound=0.75 (miss=0.25), split 2:1 normal:devastating.
+	autoWoundNormalHitDist := AutoWoundNormalHitMatrix{
+		{0, 1.0}, // auto=0: normal=0 -> 0, normal=1 -> 1.0
+	}
+	bounds := hitBounds{maxN: 1, maxL: 0, maxHits: 1}
+
+	got := computeJointWoundDist(autoWoundNormalHitDist, bounds, 0.5, 0.25)
+
+	want := NormalDevastatingWoundMatrix{
+		{0.25, 0.25}, // normWounds=0: miss (devWounds=0) or devastating (devWounds=1)
+		{0.5, 0},     // normWounds=1: normal wound (devWounds=0)
+	}
+
+	if len(got) != len(want) {
+		t.Fatalf("got %d rows, want %d", len(got), len(want))
+	}
+	for nw := range want {
+		for dw := range want[nw] {
+			if math.Abs(got[nw][dw]-want[nw][dw]) > epsilonCore {
+				t.Errorf("[nw=%d][dw=%d]: got %v, want %v", nw, dw, got[nw][dw], want[nw][dw])
+			}
+		}
+	}
+}
+
+func TestComputeAutoWoundNormalHitDist(t *testing.T) {
+	// Exactly 1 attack, whose single die roll is 60% one normal hit or 40%
+	// one lethal hit. With attackCount pinned to 1, ComputeMultiAttackHitDistribution
+	// is the identity, so CollapseLethalHitsIntoAutoWounds just swaps
+	// [normal][lethal] -> [lethal(auto)][normal].
+	attackCountDist := map[int]float64{1: 1.0}
+	hitOutcomeDist := map[HitOutcome]float64{
+		{NormalHits: 1, LethalHits: 0}: 0.6,
+		{NormalHits: 0, LethalHits: 1}: 0.4,
+	}
+	bounds := computeHitBounds(attackCountDist, hitOutcomeDist)
+
+	got := computeAutoWoundNormalHitDist(hitOutcomeDist, attackCountDist, bounds)
+
+	want := AutoWoundNormalHitMatrix{
+		{0, 0.6}, // auto=0: normal=0 -> 0, normal=1 -> 0.6
+		{0.4, 0}, // auto=1: normal=0 -> 0.4, normal=1 -> 0
+	}
+
+	if len(got) != len(want) {
+		t.Fatalf("got %d auto-wound rows, want %d", len(got), len(want))
+	}
+	for auto := range want {
+		for normal := range want[auto] {
+			if math.Abs(got[auto][normal]-want[auto][normal]) > epsilonCore {
+				t.Errorf("[auto=%d][normal=%d]: got %v, want %v", auto, normal, got[auto][normal], want[auto][normal])
+			}
+		}
+	}
+}
+
+func TestComputeHitBounds(t *testing.T) {
+	attackCountDist := map[int]float64{0: 0.5, 2: 0.3, 5: 0.2} // maxAttacks = 5
+	hitOutcomeDist := map[HitOutcome]float64{
+		{NormalHits: 1, LethalHits: 0}: 0.5, // sum 1
+		{NormalHits: 0, LethalHits: 2}: 0.3, // sum 2, maxLethalPerAttack
+		{NormalHits: 1, LethalHits: 1}: 0.2, // sum 2, ties maxPerTotal
+	}
+
+	got := computeHitBounds(attackCountDist, hitOutcomeDist)
+
+	want := hitBounds{
+		maxAttacks:         5,
+		maxNormalPerAttack: 1,
+		maxLethalPerAttack: 2,
+		maxN:               5,  // 5 * 1
+		maxL:               10, // 5 * 2
+		maxHits:            10, // 5 * 2 (tighter than maxN+maxL = 15)
+	}
+
+	if got != want {
+		t.Errorf("computeHitBounds() = %+v, want %+v", got, want)
+	}
+}
+
+func TestComputeHitOutcomeDist(t *testing.T) {
+	t.Run("Torrent bypasses the hit roll entirely", func(t *testing.T) {
+		req := CombatSimulationRequest{
+			Attacker: AttackerProfile{
+				Torrent: true,
+				BS:      6, // irrelevant under Torrent
+			},
+		}
+
+		got := computeHitOutcomeDist(req)
+
+		want := HitOutcome{NormalHits: 1, LethalHits: 0}
+		if len(got) != 1 || got[want] != 1.0 {
+			t.Errorf("Torrent hit outcome = %v, want {%v: 1.0}", got, want)
+		}
+	})
+
+	t.Run("Standard hit roll delegates to CalculateSingleHitDistribution", func(t *testing.T) {
+		req := CombatSimulationRequest{
+			Attacker: AttackerProfile{
+				BS:            3,
+				LethalHits:    true,
+				SustainedHits: 1,
+			},
+			Settings: SimulationSettings{
+				HitReroll:            RerollOnes,
+				HitModifier:          1,
+				CriticalHitThreshold: 6,
+			},
+		}
+
+		got := computeHitOutcomeDist(req)
+		want := CalculateSingleHitDistribution(3, RerollOnes, 1, true, 1, 6)
+
+		if len(got) != len(want) {
+			t.Fatalf("got %d outcomes, want %d", len(got), len(want))
+		}
+		for outcome, wantP := range want {
+			if math.Abs(got[outcome]-wantP) > epsilonCore {
+				t.Errorf("outcome %v: got %v, want %v", outcome, got[outcome], wantP)
+			}
+		}
+	})
+}
+
 func intPtr(i int) *int {
 	return &i
 }
