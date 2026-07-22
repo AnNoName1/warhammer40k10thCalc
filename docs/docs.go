@@ -142,7 +142,6 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "hit_modifier": {
-                    "description": "Modifiers (e.g., -1 to hit is -1)",
                     "type": "integer"
                 },
                 "lethal_hits": {
@@ -192,12 +191,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "summary": {
-                    "description": "Grouped or flattened as you prefer, but separate from the core",
-                    "allOf": [
-                        {
-                            "$ref": "#/definitions/damagerequest.SummaryDTO"
-                        }
-                    ]
+                    "$ref": "#/definitions/damagerequest.SummaryDTO"
                 }
             }
         },
