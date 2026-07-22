@@ -33,7 +33,7 @@ import (
 //	@BasePath		/api
 
 func main() {
-	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile) // Optional: Better logging format
+	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
 
 	if err := app.Run(); err != nil {
 		// Only handles the fatal error case, keeping main simple.
