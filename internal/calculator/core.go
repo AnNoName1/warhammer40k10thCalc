@@ -24,6 +24,33 @@ import (
 	"fmt"
 )
 
+// Probability-pruning thresholds. Every recursive/convolution step in this
+// file skips branches below one of these cutoffs rather than tracking them
+// exactly — without pruning, the state space grows combinatorially with
+// attack count and this would never terminate in practice.
+const (
+	// negligibleProbability is the default cutoff, used everywhere a single
+	// probability value is checked once.
+	negligibleProbability = 1e-15
+
+	// coarseNegligibleProbability is used only in computeDamageAllocation's
+	// outermost loop, the most expensive pass in the pipeline (it allocates
+	// and convolves per (nw, dw) pair). Pruning more aggressively before any
+	// of that work runs trades a small amount of extra approximation for a
+	// meaningful reduction in work; the inner per-branch checks in the same
+	// function still use the standard, tighter cutoff.
+	coarseNegligibleProbability = 1e-12
+
+	// fineNegligibleProbability is used only inside the repeated-squaring
+	// convolution in ConvolveJointHitMatricesBounded. That matrix gets
+	// squared against itself up to log2(attacks) more times after this
+	// check runs, so a probability that's small-but-not-negligible now
+	// could still contribute meaningfully after further squaring; pruning
+	// at the standard cutoff here risks compounding that error away over
+	// several convolution rounds, so this uses a tighter bound instead.
+	fineNegligibleProbability = 1e-18
+)
+
 // Validator defines the contract for complexity/safety checks.
 type Validator func(*CombatSimulationRequest) error
 
@@ -35,14 +62,23 @@ type DamageCalculatorImpl struct {
 // It uses a "Transition Map" algorithm: instead of simulating dice rolls, it
 // calculates the mathematical probability of every possible branch in the
 // attack sequence (Hit -> Wound -> Save -> Damage).
-// getBinomialVector calculates the binomial distribution for n trials with probability p.
-// Returns a vector where index i is the probability of exactly i successes.
-
+//
+// Pipeline shape: attackCountDist and hitOutcomeDist are independent, each
+// derived only from req; computeHitBounds runs after both because it
+// inspects their outcome keys to size every matrix downstream.
+// computeAutoWoundNormalHitDist combines the two into a single hit-count
+// distribution. computeJointWoundDist is where the normal and devastating
+// streams first separate — a wound's binomial split into "normal" vs
+// "devastating" depends on probDevWound. From that joint wound
+// distribution, computeTotalWoundsDist, computeFinalUnsavedDist, and
+// computeDamageAllocation each derive one output distribution
+// independently; computeFinalHitsDist is the exception, derived directly
+// from the hit-count distribution rather than the wound distribution,
+// since hits are counted before any wound roll happens.
 func (d *DamageCalculatorImpl) CalculateDamageCore(req CombatSimulationRequest) (SimulationResult, error) {
-	// 1. Hydrate (Mutate/Normalize State) - ALWAYS runs
+	// Hydrate always runs; Validate uses the default unless overridden.
 	d.Hydrate(&req)
 
-	// 2. Validate (Check Constraints) - Runs default unless overridden
 	validate := d.Validator
 	if validate == nil {
 		validate = DefaultComplexityValidator
@@ -54,7 +90,6 @@ func (d *DamageCalculatorImpl) CalculateDamageCore(req CombatSimulationRequest) 
 
 	targetCount := *req.Target.Count
 
-	// ── 1. Attack count distribution ───────────────────────────────
 	attackCountDist := CalculateAttackDistribution(
 		req.Attacker.Attacks,
 		req.Attacker.Count,
@@ -62,10 +97,8 @@ func (d *DamageCalculatorImpl) CalculateDamageCore(req CombatSimulationRequest) 
 		targetCount,
 	)
 
-	// ── 2. Single-attack hit outcome distribution (DISCRETE) ───────
 	hitOutcomeDist := computeHitOutcomeDist(req)
 
-	// ── 3. Wound probabilities (per wound roll) ────────────────────
 	probNormalWound, probDevWound := CalculateWoundProbability(
 		req.Attacker.Strength,
 		req.Target.Toughness,
@@ -75,7 +108,6 @@ func (d *DamageCalculatorImpl) CalculateDamageCore(req CombatSimulationRequest) 
 		req.Settings.CriticalWoundThreshold,
 	)
 
-	// ── 4. Save failure probability ────────────────────────────────
 	probSaveFailed := CalculateFailedSaveProbability(
 		req.Attacker.AP,
 		req.Target.Save,
@@ -85,13 +117,10 @@ func (d *DamageCalculatorImpl) CalculateDamageCore(req CombatSimulationRequest) 
 		req.Settings.SaveReroll,
 	)
 
-	// ── 5. Max attacks for sizing ──────────────────────────────────
 	bounds := computeHitBounds(attackCountDist, hitOutcomeDist)
 
-	// ── 7. Hits distribution (exact, discrete) ─────────────────────
 	finalAutoWoundNormalHitDist := computeAutoWoundNormalHitDist(hitOutcomeDist, attackCountDist, bounds)
 
-	// ── 6. Joint distribution: normal-before-save × devastating ────
 	jointWoundDist := computeJointWoundDist(finalAutoWoundNormalHitDist, bounds, probNormalWound, probDevWound)
 
 	finalHitsDist := computeFinalHitsDist(finalAutoWoundNormalHitDist, bounds)
@@ -166,7 +195,6 @@ func computeHitBounds(attackCountDist map[int]float64, hitOutcomeDist map[HitOut
 // computeAutoWoundNormalHitDist returns the final collapsed hit distribution
 // (auto wounds × normal hits), summed across every possible attack count.
 func computeAutoWoundNormalHitDist(hitOutcomeDist map[HitOutcome]float64, attackCountDist map[int]float64, bounds hitBounds) AutoWoundNormalHitMatrix {
-	// Build dense single-attack hit matrix
 	singleAttackHitMatrix := BuildSingleAttackHitMatrix(
 		hitOutcomeDist,
 		bounds.maxNormalPerAttack,
@@ -178,13 +206,11 @@ func computeAutoWoundNormalHitDist(hitOutcomeDist map[HitOutcome]float64, attack
 		finalAutoWoundNormalHitDist[i] = make([]float64, bounds.maxN+1)
 	}
 
-	// Loop over attack count distribution
 	for attackCount, attackProbability := range attackCountDist {
-		if attackProbability < 1e-15 {
+		if attackProbability < negligibleProbability {
 			continue
 		}
 
-		// Exact joint hit distribution for this attack count
 		jointHitMatrix := ComputeMultiAttackHitDistribution(
 			singleAttackHitMatrix,
 			attackCount,
@@ -194,11 +220,9 @@ func computeAutoWoundNormalHitDist(hitOutcomeDist map[HitOutcome]float64, attack
 			bounds.maxL,
 		)
 
-		// Collapse lethal → auto wounds
 		autoWoundNormalHitMatrix :=
 			CollapseLethalHitsIntoAutoWounds(jointHitMatrix, bounds.maxN, bounds.maxL)
 
-		// Accumulate weighted result
 		for auto := 0; auto <= bounds.maxL; auto++ {
 			for normal := 0; normal <= bounds.maxN; normal++ {
 				p := autoWoundNormalHitMatrix[auto][normal]
@@ -229,7 +253,12 @@ func computeJointWoundDist(autoWoundNormalHitDist AutoWoundNormalHitMatrix, boun
 		jointWoundDist[i] = make([]float64, bounds.maxHits+1)
 	}
 
-	// Precompute binomials (caching)
+	// pAnyWound is P(wound): the union of the normal and devastating wound
+	// chances. pDevCond is P(devastating | wound), the conditional
+	// probability used to split each already-determined wound into normal
+	// vs devastating via binomDev below — normal and devastating are
+	// mutually exclusive outcomes of the same wound roll, not independent
+	// events, so the split must be conditioned on a wound having happened.
 	pAnyWound := probNormalWound + probDevWound
 	pDevCond := 0.0
 	if pAnyWound > 0 {
@@ -241,7 +270,7 @@ func computeJointWoundDist(autoWoundNormalHitDist AutoWoundNormalHitMatrix, boun
 	for autoWounds := 0; autoWounds <= bounds.maxL; autoWounds++ {
 		for normalHits := 0; normalHits <= bounds.maxN; normalHits++ {
 			pState := autoWoundNormalHitDist[autoWounds][normalHits]
-			if pState < 1e-15 {
+			if pState < negligibleProbability {
 				continue
 			}
 
@@ -253,14 +282,14 @@ func computeJointWoundDist(autoWoundNormalHitDist AutoWoundNormalHitMatrix, boun
 
 			// Roll to wound for normal hits only.
 			for totalWounds, pWound := range binomAny[normalHits] {
-				if pWound < 1e-15 {
+				if pWound < negligibleProbability {
 					continue
 				}
 
 				// Split wounds into normal vs devastating.
 				for devWounds, pDev := range binomDev[totalWounds] {
 					pFinal := pState * pWound * pDev
-					if pFinal < 1e-15 {
+					if pFinal < negligibleProbability {
 						continue
 					}
 
@@ -282,7 +311,7 @@ func computeFinalHitsDist(autoWoundNormalHitDist AutoWoundNormalHitMatrix, bound
 	for autoWounds := 0; autoWounds <= bounds.maxL; autoWounds++ {
 		for normalHits := 0; normalHits <= bounds.maxN; normalHits++ {
 			probability := autoWoundNormalHitDist[autoWounds][normalHits]
-			if probability < 1e-15 {
+			if probability < negligibleProbability {
 				continue
 			}
 
@@ -304,7 +333,7 @@ func computeTotalWoundsDist(jointWoundDist NormalDevastatingWoundMatrix, maxHits
 		row := jointWoundDist[nw]
 		for dw := 0; dw <= maxHits; dw++ {
 			p := row[dw]
-			if p < 1e-15 {
+			if p < negligibleProbability {
 				continue
 			}
 
@@ -319,18 +348,18 @@ func computeTotalWoundsDist(jointWoundDist NormalDevastatingWoundMatrix, maxHits
 
 // computeFinalUnsavedDist returns the distribution of unsaved wounds
 // (unsaved normal wounds + devastating wounds, which bypass the save roll
-// entirely). Compute by looping over joint.
+// entirely).
 func computeFinalUnsavedDist(jointWoundDist NormalDevastatingWoundMatrix, maxHits int, probSaveFailed float64) []float64 {
 	finalUnsavedDist := make([]float64, maxHits+1)
 	for nw := 0; nw <= maxHits; nw++ {
 		for dw := 0; dw <= maxHits; dw++ {
 			pJoint := jointWoundDist[nw][dw]
-			if pJoint < 1e-15 {
+			if pJoint < negligibleProbability {
 				continue
 			}
 			unsavedNormal := getBinomialVector(nw, probSaveFailed)
 			for u, pU := range unsavedNormal {
-				if pU < 1e-15 {
+				if pU < negligibleProbability {
 					continue
 				}
 				totalUnsaved := u + dw
@@ -358,7 +387,6 @@ func computeDamageAllocation(
 	dmgDist := _calculateDamageDistribution(damage, feelNoPain)
 	finalKilledSlice := make([]float64, targetCount+1)
 
-	// NEW: Total Damage Accumulators
 	maxD := GetMaxFromDice(damage)
 	totalDamageVec := make([]float64, maxHits*maxD+1)
 	// Pre-calculate convolutions for each possible total hit count [0...maxHits]
@@ -370,14 +398,14 @@ func computeDamageAllocation(
 		row := jointWoundDist[nw]
 		for dw := 0; dw <= maxHits; dw++ {
 			pJoint := row[dw]
-			if pJoint < 1e-12 {
+			if pJoint < coarseNegligibleProbability {
 				continue
 			}
 
 			unsavedNormalDist := getBinomialVector(nw, probSaveFailed)
 			for u, pU := range unsavedNormalDist {
 				weight := pJoint * pU
-				if weight < 1e-15 {
+				if weight < negligibleProbability {
 					continue
 				}
 				resolveDamageToSlice(
@@ -388,7 +416,6 @@ func computeDamageAllocation(
 					finalKilledSlice,
 					weight,
 				)
-				// 2. New Logic: Total Damage Distribution
 				totalUnsaved := u + dw
 				// Lazily compute convolution only when needed
 				if damageConvs[totalUnsaved] == nil {
@@ -402,7 +429,6 @@ func computeDamageAllocation(
 					damageConvs[totalUnsaved] = curr
 				}
 
-				// Accumulate directly into result
 				for d, pD := range damageConvs[totalUnsaved] {
 					totalDamageVec[d] += pD * weight
 				}
@@ -423,7 +449,6 @@ func computeHitOutcomeDist(req CombatSimulationRequest) map[HitOutcome]float64 {
 		}
 	}
 
-	// Standard Hit Roll logic
 	return CalculateSingleHitDistribution(
 		req.Attacker.BS,
 		req.Settings.HitReroll,
@@ -435,6 +460,10 @@ func computeHitOutcomeDist(req CombatSimulationRequest) map[HitOutcome]float64 {
 }
 
 // --- HELPER FUNCTIONS ---
+
+// getBinomialVector calculates the binomial distribution for n trials with
+// probability p. Returns a vector where index i is the probability of
+// exactly i successes.
 func getBinomialVector(n int, p float64) []float64 {
 	dist := make([]float64, n+1)
 	dist[0] = 1.0
@@ -462,7 +491,7 @@ func getBinomialVector(n int, p float64) []float64 {
 func vectorToMap(vec []float64) map[int]float64 {
 	res := make(map[int]float64)
 	for i, p := range vec {
-		if p > 1e-15 {
+		if p > negligibleProbability {
 			res[i] = p
 		}
 	}
@@ -474,7 +503,7 @@ func applyWoundsLinear(next, states []float64, dmgDist map[int]float64, maxHP in
 	// 'next' must be zeroed by the caller before passing in.
 
 	for currentWounds, stateProb := range states {
-		if stateProb <= 1e-15 { // Efficiency: Skip negligible probabilities
+		if stateProb <= negligibleProbability {
 			continue
 		}
 		if currentWounds == 0 { // Unit already dead
@@ -607,7 +636,7 @@ func resolveDamageToSlice(
 
 	// 3. Accumulate weighted results directly into the destination
 	for remaining, prob := range states {
-		if prob < 1e-15 {
+		if prob < negligibleProbability {
 			continue
 		}
 		modelsLeft := (remaining + maxHP - 1) / maxHP
@@ -665,7 +694,7 @@ func ConvolveJointHitMatricesBounded(
 	for ln := 0; ln <= leftMaxNormal; ln++ {
 		for ll := 0; ll <= leftMaxLethal; ll++ {
 			leftProb := left[ln][ll]
-			if leftProb < 1e-18 {
+			if leftProb < fineNegligibleProbability {
 				continue
 			}
 			for rn := 0; rn <= rightMaxNormal && ln+rn <= globalMaxNormal; rn++ {
