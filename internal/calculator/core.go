@@ -132,8 +132,6 @@ func (d *DamageCalculatorImpl) CalculateDamageCore(req CombatSimulationRequest) 
 	}
 
 	// ── 7. Hits distribution (exact, discrete) ─────────────────────
-	// globalHitDist[NormalHits][LethalHits]
-
 	// Determine per-attack bounds
 	maxNormalHitsPerAttack := maxNper
 	maxLethalHitsPerAttack := maxLper
