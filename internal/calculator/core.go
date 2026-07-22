@@ -52,12 +52,14 @@ func (d *DamageCalculatorImpl) CalculateDamageCore(req CombatSimulationRequest) 
 		return SimulationResult{}, err
 	}
 
+	targetCount := *req.Target.Count
+
 	// ── 1. Attack count distribution ───────────────────────────────
 	attackCountDist := CalculateAttackDistribution(
 		req.Attacker.Attacks,
 		req.Attacker.Count,
 		req.Attacker.Blast,
-		*req.Target.Count,
+		targetCount,
 	)
 
 	// ── 2. Single-attack hit outcome distribution (DISCRETE) ───────
@@ -98,64 +100,11 @@ func (d *DamageCalculatorImpl) CalculateDamageCore(req CombatSimulationRequest) 
 
 	finalUnsavedDist := computeFinalUnsavedDist(jointWoundDist, bounds.maxHits, probSaveFailed)
 
-	// ── 11. Damage allocation ──────────────────────────────────────
-	// TODO: Some units grant Feel No Pain that explicitly excludes devastating
-	// wound damage. Not modeled — FNP is currently applied uniformly to both
-	// normal and devastating damage via dmgDist.
-	dmgDist := _calculateDamageDistribution(req.Attacker.Damage, req.Target.FeelNoPain)
-	finalKilledSlice := make([]float64, *req.Target.Count+1)
-
-	// NEW: Total Damage Accumulators
-	maxD := GetMaxFromDice(req.Attacker.Damage)
-	totalDamageVec := make([]float64, bounds.maxHits*maxD+1)
-	// Pre-calculate convolutions for each possible total hit count [0...maxHits]
-	// damageConvs[hits][damage]
-	damageConvs := make([][]float64, bounds.maxHits+1)
-	damageConvs[0] = []float64{1.0}
-
-	for nw := 0; nw <= bounds.maxHits; nw++ {
-		row := jointWoundDist[nw]
-		for dw := 0; dw <= bounds.maxHits; dw++ {
-			pJoint := row[dw]
-			if pJoint < 1e-12 {
-				continue
-			}
-
-			unsavedNormalDist := getBinomialVector(nw, probSaveFailed)
-			for u, pU := range unsavedNormalDist {
-				weight := pJoint * pU
-				if weight < 1e-15 {
-					continue
-				}
-				resolveDamageToSlice(
-					u, dw,
-					dmgDist, dmgDist,
-					req.Target.WoundsPerModel,
-					*req.Target.Count,
-					finalKilledSlice,
-					weight,
-				)
-				// 2. New Logic: Total Damage Distribution
-				totalUnsaved := u + dw
-				// Lazily compute convolution only when needed
-				if damageConvs[totalUnsaved] == nil {
-					prev := damageConvs[totalUnsaved-1]
-					curr := make([]float64, len(prev)+maxD)
-					for i, pPrev := range prev {
-						for dVal, pD := range dmgDist {
-							curr[i+dVal] += pPrev * pD
-						}
-					}
-					damageConvs[totalUnsaved] = curr
-				}
-
-				// Accumulate directly into result
-				for d, pD := range damageConvs[totalUnsaved] {
-					totalDamageVec[d] += pD * weight
-				}
-			}
-		}
-	}
+	finalKilledSlice, totalDamageVec := computeDamageAllocation(
+		jointWoundDist, bounds.maxHits, probSaveFailed,
+		req.Attacker.Damage, req.Target.FeelNoPain,
+		req.Target.WoundsPerModel, targetCount,
+	)
 
 	return formatResponse(
 		vectorToMap(finalHitsDist),
@@ -390,6 +339,78 @@ func computeFinalUnsavedDist(jointWoundDist NormalDevastatingWoundMatrix, maxHit
 		}
 	}
 	return finalUnsavedDist
+}
+
+// computeDamageAllocation resolves each (unsavedNormal, devastating) wound
+// state into destroyed models and total damage dealt.
+//
+// TODO: Some units grant Feel No Pain that explicitly excludes devastating
+// wound damage. Not modeled — FNP is currently applied uniformly to both
+// normal and devastating damage via dmgDist.
+func computeDamageAllocation(
+	jointWoundDist NormalDevastatingWoundMatrix,
+	maxHits int,
+	probSaveFailed float64,
+	damage DiceRoll,
+	feelNoPain *int,
+	woundsPerModel, targetCount int,
+) (killed, damageVec []float64) {
+	dmgDist := _calculateDamageDistribution(damage, feelNoPain)
+	finalKilledSlice := make([]float64, targetCount+1)
+
+	// NEW: Total Damage Accumulators
+	maxD := GetMaxFromDice(damage)
+	totalDamageVec := make([]float64, maxHits*maxD+1)
+	// Pre-calculate convolutions for each possible total hit count [0...maxHits]
+	// damageConvs[hits][damage]
+	damageConvs := make([][]float64, maxHits+1)
+	damageConvs[0] = []float64{1.0}
+
+	for nw := 0; nw <= maxHits; nw++ {
+		row := jointWoundDist[nw]
+		for dw := 0; dw <= maxHits; dw++ {
+			pJoint := row[dw]
+			if pJoint < 1e-12 {
+				continue
+			}
+
+			unsavedNormalDist := getBinomialVector(nw, probSaveFailed)
+			for u, pU := range unsavedNormalDist {
+				weight := pJoint * pU
+				if weight < 1e-15 {
+					continue
+				}
+				resolveDamageToSlice(
+					u, dw,
+					dmgDist, dmgDist,
+					woundsPerModel,
+					targetCount,
+					finalKilledSlice,
+					weight,
+				)
+				// 2. New Logic: Total Damage Distribution
+				totalUnsaved := u + dw
+				// Lazily compute convolution only when needed
+				if damageConvs[totalUnsaved] == nil {
+					prev := damageConvs[totalUnsaved-1]
+					curr := make([]float64, len(prev)+maxD)
+					for i, pPrev := range prev {
+						for dVal, pD := range dmgDist {
+							curr[i+dVal] += pPrev * pD
+						}
+					}
+					damageConvs[totalUnsaved] = curr
+				}
+
+				// Accumulate directly into result
+				for d, pD := range damageConvs[totalUnsaved] {
+					totalDamageVec[d] += pD * weight
+				}
+			}
+		}
+	}
+
+	return finalKilledSlice, totalDamageVec
 }
 
 // computeHitOutcomeDist returns the PMF of hit outcomes for a single attack.

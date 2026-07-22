@@ -490,6 +490,44 @@ func TestCalculateDamageCore_FeelNoPain_AppliedToDevastatingWounds(t *testing.T)
 	verifyDist(t, "DamageDist", resp.DamageDist, expectedDamageDist)
 }
 
+func TestComputeDamageAllocation(t *testing.T) {
+	// Certain: 1 normal wound before save, save always fails (probSaveFailed=1.0).
+	// Fixed 2 damage vs a single 5-wound model: never kills outright, always
+	// deals exactly 2 damage.
+	jointWoundDist := NormalDevastatingWoundMatrix{
+		{0, 0},
+		{1.0, 0},
+	}
+	maxHits := 1
+
+	killed, damageVec := computeDamageAllocation(
+		jointWoundDist, maxHits, 1.0,
+		DiceRoll{Modifier: 2}, nil,
+		5, 1,
+	)
+
+	wantKilled := []float64{1.0, 0}    // 0 models destroyed, with certainty
+	wantDamage := []float64{0, 0, 1.0} // 2 total damage, with certainty
+
+	if len(killed) != len(wantKilled) {
+		t.Fatalf("killed: got %d entries, want %d", len(killed), len(wantKilled))
+	}
+	for i := range wantKilled {
+		if math.Abs(killed[i]-wantKilled[i]) > epsilonCore {
+			t.Errorf("killed[%d]: got %v, want %v", i, killed[i], wantKilled[i])
+		}
+	}
+
+	if len(damageVec) != len(wantDamage) {
+		t.Fatalf("damageVec: got %d entries, want %d", len(damageVec), len(wantDamage))
+	}
+	for i := range wantDamage {
+		if math.Abs(damageVec[i]-wantDamage[i]) > epsilonCore {
+			t.Errorf("damageVec[%d]: got %v, want %v", i, damageVec[i], wantDamage[i])
+		}
+	}
+}
+
 func TestComputeFinalUnsavedDist(t *testing.T) {
 	// Certain: 1 normal wound before save, 0 devastating. probSaveFailed=0.6.
 	jointWoundDist := NormalDevastatingWoundMatrix{
