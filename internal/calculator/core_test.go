@@ -547,6 +547,26 @@ func TestDamageCalculatorImpl_Hydrate(t *testing.T) {
 			},
 		},
 		{
+			name: "Infinite Target Resolution Ignores DevastatingWounds",
+			input: CombatSimulationRequest{
+				Attacker: AttackerProfile{
+					Count:             1,
+					Attacks:           DiceRoll{Count: 10, Sides: 1, Modifier: 0},
+					Damage:            DiceRoll{Count: 2, Sides: 1, Modifier: 0},
+					DevastatingWounds: true,
+				},
+				Target: TargetProfile{Count: nil, WoundsPerModel: 2},
+			},
+			check: func(t *testing.T, got CombatSimulationRequest) {
+				if got.Target.Count == nil {
+					t.Fatal("Target.Count remains nil after Hydration")
+				}
+				if *got.Target.Count != 10 {
+					t.Errorf("count should resolve to maxAttacks (10) regardless of DevastatingWounds, got %d", *got.Target.Count)
+				}
+			},
+		},
+		{
 			name: "Enforces Hard Cap on Infinite Resolution",
 			input: CombatSimulationRequest{
 				// Massive damage potential requesting infinite targets

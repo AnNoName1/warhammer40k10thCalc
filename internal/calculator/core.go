@@ -731,18 +731,7 @@ func (d *DamageCalculatorImpl) Hydrate(req *CombatSimulationRequest) {
 	if req.Target.Count == nil {
 		// Calculate the ceiling for target resolution
 		maxAttacks := GetMaxFromDice(req.Attacker.Attacks) * req.Attacker.Count
-		maxDamage := GetMaxFromDice(req.Attacker.Damage)
-
-		// Hardcoded false in original; assuming intended as a logic toggle
-		devastatingDoSpillover := false
-
-		var count int
-		if req.Attacker.DevastatingWounds && devastatingDoSpillover {
-			totalPossibleDamage := maxAttacks * maxDamage
-			count = (totalPossibleDamage / req.Target.WoundsPerModel) + 1
-		} else {
-			count = maxAttacks
-		}
+		count := maxAttacks
 
 		// Enforce DOS cap
 		if count > 200 {
