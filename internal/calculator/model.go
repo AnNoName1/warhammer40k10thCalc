@@ -58,16 +58,14 @@ type TargetProfile struct {
 }
 
 type SimulationSettings struct {
-	HitReroll   RerollType
-	WoundReroll RerollType
-	SaveReroll  RerollType
-	// Thresholds
+	HitReroll              RerollType
+	WoundReroll            RerollType
+	SaveReroll             RerollType
 	CriticalHitThreshold   int
 	CriticalWoundThreshold int
-	//modifiers
-	SaveModifier  int
-	HitModifier   int
-	WoundModifier int
+	SaveModifier           int
+	HitModifier            int
+	WoundModifier          int
 }
 
 // dice string struct - 2d6 + 1
@@ -77,7 +75,7 @@ type DiceRoll struct {
 	Modifier int // Flat bonus (e.g., +1)
 }
 
-// RerollType definitions
+// RerollType enumerates the supported dice-reroll rules.
 type RerollType int
 
 const (
@@ -85,12 +83,10 @@ const (
 	RerollNone RerollType = iota
 	RerollOnes
 	RerollFail
-	// Add more types as needed
 )
 
 // String implements the fmt.Stringer interface to provide a readable string value.
 func (r RerollType) String() string {
-	// Map the integer value back to a descriptive string.
 	if r < 0 || int(r) >= len(rerollTypeNames) {
 		return fmt.Sprintf("UnknownRerollType(%d)", r)
 	}
@@ -125,7 +121,6 @@ func (r *RerollType) UnmarshalJSON(b []byte) error {
 	return fmt.Errorf("unknown RerollType: %s", s)
 }
 
-// response
 type SimulationResult struct {
 	AverageHits      float64
 	AverageDestroyed float64

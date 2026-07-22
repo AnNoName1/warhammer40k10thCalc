@@ -443,6 +443,53 @@ func TestCalculateDamageCore_Torrent(t *testing.T) {
 	}
 }
 
+func TestCalculateDamageCore_FeelNoPain_AppliedToDevastatingWounds(t *testing.T) {
+	// Regression test locking in that Feel No Pain reduces devastating-wound
+	// damage exactly like normal damage — the two previously duplicated
+	// (dmgWithFnp/dmgNoFnp) calls made this easy to silently diverge. Torrent
+	// forces exactly 1 hit so only the Wound/Devastating/FNP math is under test.
+	req := CombatSimulationRequest{
+		Attacker: AttackerProfile{
+			Count:             1,
+			Attacks:           DiceRoll{Modifier: 1},
+			Torrent:           true,
+			Strength:          8,
+			DevastatingWounds: true,
+			Damage:            DiceRoll{Modifier: 4},
+		},
+		Target: TargetProfile{
+			Count:          intPtr(1),
+			Toughness:      4,
+			Save:           7,
+			WoundsPerModel: 10,
+			FeelNoPain:     intPtr(5),
+		},
+	}
+
+	// S8 vs T4 wounds on 2+ (5/6); default crit-wound threshold 6+ makes 1/6
+	// of those devastating (bypasses the impossible Save 7+) and 4/6 normal
+	// (also unsaved). FNP 5+ gives pFail = 2/3 per damage point. Both paths
+	// resolve through the identical 4-damage Binomial(4, 2/3) distribution,
+	// weighted by their combined 5/6 chance of occurring. WoundsPerModel=10
+	// keeps the single wound-instance well under model HP so damage is never
+	// capped by death, isolating the FNP math.
+	expectedDamageDist := map[int]float64{
+		0: 43.0 / 243.0,
+		1: 20.0 / 243.0,
+		2: 60.0 / 243.0,
+		3: 80.0 / 243.0,
+		4: 40.0 / 243.0,
+	}
+
+	calc := &DamageCalculatorImpl{}
+	resp, err := calc.CalculateDamageCore(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	verifyDist(t, "DamageDist", resp.DamageDist, expectedDamageDist)
+}
+
 func intPtr(i int) *int {
 	return &i
 }
@@ -496,6 +543,26 @@ func TestDamageCalculatorImpl_Hydrate(t *testing.T) {
 				// Testing for > 0 confirms logic ran.
 				if *got.Target.Count <= 0 {
 					t.Errorf("Target count resolution failed: got %d", *got.Target.Count)
+				}
+			},
+		},
+		{
+			name: "Infinite Target Resolution Ignores DevastatingWounds",
+			input: CombatSimulationRequest{
+				Attacker: AttackerProfile{
+					Count:             1,
+					Attacks:           DiceRoll{Count: 10, Sides: 1, Modifier: 0},
+					Damage:            DiceRoll{Count: 2, Sides: 1, Modifier: 0},
+					DevastatingWounds: true,
+				},
+				Target: TargetProfile{Count: nil, WoundsPerModel: 2},
+			},
+			check: func(t *testing.T, got CombatSimulationRequest) {
+				if got.Target.Count == nil {
+					t.Fatal("Target.Count remains nil after Hydration")
+				}
+				if *got.Target.Count != 10 {
+					t.Errorf("count should resolve to maxAttacks (10) regardless of DevastatingWounds, got %d", *got.Target.Count)
 				}
 			},
 		},

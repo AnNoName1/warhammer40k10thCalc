@@ -59,45 +59,63 @@ func CalculateFailedSaveProbability(ap int, save int, invulnerable *int, saveMod
 
 	const oneSixth = 1.0 / 6.0
 
-	// 1. Calculate the Benefit of Cover specifically
 	bocModifier := _getBenefitOfCoverModifier(save, ap, hasCover)
+	armorSaveTarget := modifiedArmorSaveTarget(save, ap, saveModifier, bocModifier)
+	finalTarget := betterSaveTarget(armorSaveTarget, invulnerable)
 
-	// 2. Calculate the Modified Armor Save
-	// Total modifier is the general saveModifier + the BoC bonus
-	totalModifier := saveModifier + bocModifier
-	armorSaveTarget := save + ap - totalModifier
-
-	// 3. Determine the "Best" Save Target
-	finalTarget := armorSaveTarget
-	if invulnerable != nil {
-		invulnTarget := *invulnerable
-		if invulnTarget < finalTarget {
-			finalTarget = invulnTarget
-		}
+	finalTarget, autoFail := clampSaveTarget(finalTarget)
+	if autoFail {
+		return 1.0
 	}
 
-	// 4. Apply Caps (1 always fails, cannot pass if > 6)
-	if finalTarget < 2 {
-		finalTarget = 2
-	}
-
-	if finalTarget > 6 {
-		return 1.0 // 100% fail rate
-	}
-
-	// 5. Calculate Base Probabilities
-	passChance := (7.0 - float64(finalTarget)) / 6.0
+	passChance := chanceOfRollingAtLeast(float64(finalTarget))
 	failChance := 1.0 - passChance
 
-	// 6. Handle Rerolls
 	switch saveReroll {
 	case RerollOnes:
-		// If we roll a 1 (1/6), we retry and get another passChance
-		failChance -= oneSixth * passChance
+		// Only a natural 1 can be rerolled.
+		failChance = applyRerollReduction(failChance, passChance, oneSixth)
 	case RerollFail:
-		// If we fail (failChance), we retry and get another passChance
-		failChance -= failChance * passChance
+		// Every failed roll can be rerolled.
+		failChance = applyRerollReduction(failChance, passChance, failChance)
 	}
 
 	return math.Max(0.0, failChance)
+}
+
+// modifiedArmorSaveTarget applies the general save modifier and the Benefit
+// of Cover bonus to the defender's armor save.
+func modifiedArmorSaveTarget(save, ap, saveModifier, bocModifier int) int {
+	totalModifier := saveModifier + bocModifier
+	return save + ap - totalModifier
+}
+
+// betterSaveTarget returns the lower (easier) of the armor save target and
+// the invulnerable save, if one is present; a lower target is always at
+// least as good, since invulnerable saves ignore AP and modifiers.
+func betterSaveTarget(armorTarget int, invulnerable *int) int {
+	if invulnerable != nil && *invulnerable < armorTarget {
+		return *invulnerable
+	}
+	return armorTarget
+}
+
+// clampSaveTarget applies the core rules floor and ceiling: a natural 1
+// always fails, so no save can need better than 2+; nothing beyond 6+ is
+// rollable, so any higher requirement auto-fails the save entirely.
+func clampSaveTarget(target int) (clamped int, autoFail bool) {
+	if target < 2 {
+		target = 2
+	}
+	if target > 6 {
+		return 0, true
+	}
+	return target, false
+}
+
+// applyRerollReduction subtracts the chance that a reroll turns a fail into
+// a pass: a second attempt happens with probability retryChance, so
+// retryChance*passChance of the original failures are saved.
+func applyRerollReduction(failChance, passChance, retryChance float64) float64 {
+	return failChance - retryChance*passChance
 }

@@ -132,8 +132,6 @@ func (d *DamageCalculatorImpl) CalculateDamageCore(req CombatSimulationRequest) 
 	}
 
 	// ── 7. Hits distribution (exact, discrete) ─────────────────────
-	// globalHitDist[NormalHits][LethalHits]
-
 	// Determine per-attack bounds
 	maxNormalHitsPerAttack := maxNper
 	maxLethalHitsPerAttack := maxLper
@@ -297,8 +295,10 @@ func (d *DamageCalculatorImpl) CalculateDamageCore(req CombatSimulationRequest) 
 	}
 
 	// ── 11. Damage allocation ──────────────────────────────────────
-	dmgWithFnp := _calculateDamageDistribution(req.Attacker.Damage, req.Target.FeelNoPain) // FNP applied here
-	dmgNoFnp := _calculateDamageDistribution(req.Attacker.Damage, req.Target.FeelNoPain)   // FNP for devastating - latest rules
+	// TODO: Some units grant Feel No Pain that explicitly excludes devastating
+	// wound damage. Not modeled — FNP is currently applied uniformly to both
+	// normal and devastating damage via dmgDist.
+	dmgDist := _calculateDamageDistribution(req.Attacker.Damage, req.Target.FeelNoPain)
 	finalKilledSlice := make([]float64, *req.Target.Count+1)
 
 	// NEW: Total Damage Accumulators
@@ -325,7 +325,7 @@ func (d *DamageCalculatorImpl) CalculateDamageCore(req CombatSimulationRequest) 
 				}
 				resolveDamageToSlice(
 					u, dw,
-					dmgWithFnp, dmgNoFnp,
+					dmgDist, dmgDist,
 					req.Target.WoundsPerModel,
 					*req.Target.Count,
 					finalKilledSlice,
@@ -338,7 +338,7 @@ func (d *DamageCalculatorImpl) CalculateDamageCore(req CombatSimulationRequest) 
 					prev := damageConvs[totalUnsaved-1]
 					curr := make([]float64, len(prev)+maxD)
 					for i, pPrev := range prev {
-						for dVal, pD := range dmgNoFnp {
+						for dVal, pD := range dmgDist {
 							curr[i+dVal] += pPrev * pD
 						}
 					}
@@ -729,18 +729,7 @@ func (d *DamageCalculatorImpl) Hydrate(req *CombatSimulationRequest) {
 	if req.Target.Count == nil {
 		// Calculate the ceiling for target resolution
 		maxAttacks := GetMaxFromDice(req.Attacker.Attacks) * req.Attacker.Count
-		maxDamage := GetMaxFromDice(req.Attacker.Damage)
-
-		// Hardcoded false in original; assuming intended as a logic toggle
-		devastatingDoSpillover := false
-
-		var count int
-		if req.Attacker.DevastatingWounds && devastatingDoSpillover {
-			totalPossibleDamage := maxAttacks * maxDamage
-			count = (totalPossibleDamage / req.Target.WoundsPerModel) + 1
-		} else {
-			count = maxAttacks
-		}
+		count := maxAttacks
 
 		// Enforce DOS cap
 		if count > 200 {

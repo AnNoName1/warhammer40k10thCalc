@@ -42,7 +42,8 @@ func _calculateDamageDistribution(damage DiceRoll, feelNoPain *int) map[int]floa
 	return applyFeelNoPain(baseDist, *feelNoPain)
 }
 
-// This replaces the string-parsing version with a direct mathematical approach.
+// generateDiceDistribution computes the exact PMF of a dice roll via direct
+// convolution (no string parsing involved).
 func generateDiceDistribution(d DiceRoll) map[int]float64 {
 	// Base case: If there are no dice to roll (e.g., flat damage "3"),
 	// start with 100% probability at 0, then add the modifier.
@@ -50,26 +51,8 @@ func generateDiceDistribution(d DiceRoll) map[int]float64 {
 		return map[int]float64{applyDamageFloor(d.Modifier): 1.0}
 	}
 
-	// 1. Initialize distribution with the first die (1 to Sides)
-	currentDist := make(map[int]float64)
-	prob := 1.0 / float64(d.Sides)
-	for i := 1; i <= d.Sides; i++ {
-		currentDist[i] = prob
-	}
+	currentDist := rollDiceDistribution(d.Count, d.Sides)
 
-	// 2. Convolve for additional dice (O(Count * Sides * Outcomes))
-	// Example: turning 1d6 distribution into 2d6, then 3d6...
-	for i := 1; i < d.Count; i++ {
-		newDist := make(map[int]float64)
-		for valA, probA := range currentDist {
-			for valDie := 1; valDie <= d.Sides; valDie++ {
-				newDist[valA+valDie] += probA * prob
-			}
-		}
-		currentDist = newDist
-	}
-
-	// 3. Apply Modifier and Damage Floor
 	// In 40k, damage/attacks generally cannot be modified below 1.
 	finalDist := make(map[int]float64)
 	for val, p := range currentDist {
@@ -96,7 +79,6 @@ func applyFeelNoPain(baseDist map[int]float64, fnpVal int) map[int]float64 {
 
 	pFail := 1.0 - pSave
 
-	// Iterate over every possible incoming damage amount
 	for incomingDmg, incomingProb := range baseDist {
 		// For a specific amount of damage 'n', the actual damage taken 'k'
 		// follows a Binomial Distribution B(n, pFail).
@@ -107,7 +89,6 @@ func applyFeelNoPain(baseDist map[int]float64, fnpVal int) map[int]float64 {
 			combinatorics := float64(nCr(incomingDmg, k))
 			probKFailed := combinatorics * math.Pow(pFail, float64(k)) * math.Pow(pSave, float64(incomingDmg-k))
 
-			// Add weighted probability to the final map
 			fnpDist[k] += incomingProb * probKFailed
 		}
 	}

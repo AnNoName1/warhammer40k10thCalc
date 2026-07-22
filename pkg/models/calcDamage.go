@@ -51,9 +51,8 @@ type AttackerDTO struct {
 	LethalHits        bool `json:"lethal_hits,omitempty"`
 	DevastatingWounds bool `json:"devastating_wounds,omitempty"`
 	Torrent           bool `json:"torrent,omitempty"`
-	// Modifiers (e.g., -1 to hit is -1)
-	HitModifier   int `json:"hit_modifier,omitempty"`
-	WoundModifier int `json:"wound_modifier,omitempty"`
+	HitModifier       int  `json:"hit_modifier,omitempty"`
+	WoundModifier     int  `json:"wound_modifier,omitempty"`
 }
 
 // TargetDTO includes defensive layers and resilience rules.
@@ -78,38 +77,20 @@ type RulesDTO struct {
 	CriticalWoundThreshold int `json:"critical_wound_threshold,omitempty"`
 }
 
-// --- Validator ---
 func (req *DamageRequestDTO) Validate() error {
-	// 1. Basic Existence
-	if req.Attacker.NumModels <= 0 {
-		return errors.New("attacker.num_models must be positive")
+	if err := validateExistence(req); err != nil {
+		return err
 	}
-	if req.Attacker.S <= 0 || req.Target.T <= 0 {
-		return errors.New("strength and toughness must be positive")
-	}
-	if req.Target.WoundsPerModel <= 0 {
-		return errors.New("target.wounds_per_model must be positive")
+	if err := validateGameLegalRules(req); err != nil {
+		return err
 	}
 
-	// 2. Impossible-by-Rules (Game Logic)
-	// BS 1+ is impossible (rolls of 1 always fail). BS 6+ is the worst possible.
-	if !req.Attacker.Torrent && (req.Attacker.BS < 2 || req.Attacker.BS > 6) {
-		return errors.New("bs must be between 2 and 6 (unless Torrent)")
-	}
-
-	// Save 1+ is impossible.
-	if req.Target.Save < 2 {
-		return errors.New("save must be 2+ or higher")
-	}
-
-	// Invulnerable checks
 	if req.Target.Invulnerable != nil {
 		if *req.Target.Invulnerable < 2 || *req.Target.Invulnerable > 6 {
 			return errors.New("invulnerable save must be between 2+ and 6+")
 		}
 	}
 
-	// Feel No Pain checks
 	if req.Target.FeelNoPain != nil {
 		if *req.Target.FeelNoPain < 2 || *req.Target.FeelNoPain > 6 {
 			return errors.New("fnp must be between 2+ and 6+")
@@ -122,7 +103,6 @@ func (req *DamageRequestDTO) Validate() error {
 		}
 	}
 
-	// Critical Thresholds
 	if req.Rules.CriticalHitThreshold != 0 && (req.Rules.CriticalHitThreshold < 2 || req.Rules.CriticalHitThreshold > 6) {
 		return errors.New("critical hit threshold must be between 2 and 6")
 	}
@@ -130,7 +110,6 @@ func (req *DamageRequestDTO) Validate() error {
 		return errors.New("critical wound threshold must be between 2 and 6")
 	}
 
-	// Blast Requirements
 	if req.Attacker.Blast {
 		if req.Target.ModelCount == nil {
 			return errors.New("target.model_count is required for Blast weapons")
@@ -143,24 +122,53 @@ func (req *DamageRequestDTO) Validate() error {
 	return nil
 }
 
+func validateExistence(req *DamageRequestDTO) error {
+	if req.Attacker.NumModels <= 0 {
+		return errors.New("attacker.num_models must be positive")
+	}
+	if req.Attacker.S <= 0 || req.Target.T <= 0 {
+		return errors.New("strength and toughness must be positive")
+	}
+	if req.Target.WoundsPerModel <= 0 {
+		return errors.New("target.wounds_per_model must be positive")
+	}
+	return nil
+}
+
+// validateGameLegalRules rejects values that are impossible under core dice
+// mechanics, regardless of what the caller sends.
+func validateGameLegalRules(req *DamageRequestDTO) error {
+	// BS 1+ is impossible (rolls of 1 always fail). BS 6+ is the worst possible.
+	if !req.Attacker.Torrent && (req.Attacker.BS < 2 || req.Attacker.BS > 6) {
+		return errors.New("bs must be between 2 and 6 (unless Torrent)")
+	}
+
+	// Save 1+ is impossible.
+	if req.Target.Save < 2 {
+		return errors.New("save must be 2+ or higher")
+	}
+
+	return nil
+}
+
 var diceRegex = regexp.MustCompile(`(?i)^(\d*)d(\d+)\s*([+-]\s*\d+)?$`)
 
 // ParseDiceString converts "2d6+1" or "4" into a clean DiceRoll struct
 func ParseDiceString(input string) (calculator.DiceRoll, error) {
 	input = strings.TrimSpace(input)
 
-	// 1. Handle Fixed Number (e.g. "4")
+	// Fixed number, e.g. "4".
 	if val, err := strconv.Atoi(input); err == nil {
 		return calculator.DiceRoll{Count: 0, Sides: 0, Modifier: val}, nil
 	}
 
-	// 2. Handle Dice String (e.g. "2d6+1")
+	// Dice string, e.g. "2d6+1".
 	matches := diceRegex.FindStringSubmatch(input)
 	if matches == nil {
 		return calculator.DiceRoll{}, fmt.Errorf("invalid format '%s'", input)
 	}
 
-	// Parse Count (default to 1 if empty, e.g. "d6")
+	// Empty count defaults to 1, e.g. "d6" means 1d6.
 	count := 1
 	if matches[1] != "" {
 		var err error
@@ -170,18 +178,15 @@ func ParseDiceString(input string) (calculator.DiceRoll, error) {
 		}
 	}
 
-	// Parse Sides
 	sides, err := strconv.Atoi(matches[2])
 	if err != nil || sides <= 0 {
 		return calculator.DiceRoll{}, fmt.Errorf("invalid die type")
 	}
 
-	// Parse Modifier
 	mod := 0
 	if matches[3] != "" {
-		// Remove whitespace inside modifier string (e.g. "+ 1" -> "+1")
-		cleanMod := strings.ReplaceAll(matches[3], " ", "")
-		mod, err = strconv.Atoi(cleanMod)
+		modifierWithoutSpaces := strings.ReplaceAll(matches[3], " ", "")
+		mod, err = strconv.Atoi(modifierWithoutSpaces)
 		if err != nil {
 			return calculator.DiceRoll{}, fmt.Errorf("invalid modifier: %w", err)
 		}
@@ -196,24 +201,14 @@ func ParseDiceString(input string) (calculator.DiceRoll, error) {
 
 // --- Converter (The Mapper) ---
 func (req *DamageRequestDTO) ToDomain() (calculator.CombatSimulationRequest, error) {
-	// Logic for defaulting thresholds to 6 if not provided
-	critHit := req.Rules.CriticalHitThreshold
-	if critHit == 0 {
-		critHit = 6
-	}
+	critHit := defaultThreshold(req.Rules.CriticalHitThreshold, 6)
+	critWound := defaultThreshold(req.Rules.CriticalWoundThreshold, 6)
 
-	critWound := req.Rules.CriticalWoundThreshold
-	if critWound == 0 {
-		critWound = 6
-	}
-
-	// 1. Parse Attacks
 	attacks, err := ParseDiceString(req.Attacker.AttacksString)
 	if err != nil {
 		return calculator.CombatSimulationRequest{}, fmt.Errorf("attacker attacks: %w", err)
 	}
 
-	// 2. Parse Damage
 	damage, err := ParseDiceString(req.Attacker.D)
 	if err != nil {
 		return calculator.CombatSimulationRequest{}, fmt.Errorf("attacker damage: %w", err)
@@ -258,10 +253,14 @@ func (req *DamageRequestDTO) ToDomain() (calculator.CombatSimulationRequest, err
 	return model, nil
 }
 
-//for response
+func defaultThreshold(v, fallback int) int {
+	if v == 0 {
+		return fallback
+	}
+	return v
+}
 
 type DamageResponseDTO struct {
-	// Grouped or flattened as you prefer, but separate from the core
 	Summary       SummaryDTO       `json:"summary"`
 	Distributions DistributionsDTO `json:"distributions"`
 

@@ -31,7 +31,9 @@ type APIError struct {
 	RequestUUID string `json:"request_uuid"`
 }
 
-// SendError sends a standardized JSON error response.
+// SendError writes an APIError as the JSON response body, setting the
+// Content-Type header and status code. reqID may be empty if none was
+// resolved for the request.
 func SendError(w http.ResponseWriter, reqID string, message string, code int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)

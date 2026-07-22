@@ -27,15 +27,14 @@ func CalculateAttackDistribution(
 	targetCount int,
 ) map[int]float64 {
 
-	// 1. Parse attack string into a PER-MODEL distribution
+	// PER-MODEL distribution.
 	perModelDist := getDiceDistribution(attacks)
 
-	// 2. Apply Blast (still PER-MODEL)
+	// Blast is applied per model, before scaling to the whole unit.
 	if blast {
 		perModelDist = applyBlastModifier(perModelDist, targetCount)
 	}
 
-	// 3. Scale per-model distribution by attacker count
 	unitDist := scaleByAttackerCount(perModelDist, attackerCount)
 
 	return unitDist
@@ -50,9 +49,8 @@ func applyDamageFloor(value int) int {
 
 func getDiceDistribution(attacks DiceRoll) map[int]float64 {
 
-	// Roll dice
 	dist := rollDiceDistribution(attacks.Count, attacks.Sides)
-	// Apply flat modifier AND damage floor (Damage cannot be < 1)
+	// Damage/attacks cannot be modified below 1.
 	finalDist := make(map[int]float64)
 	for val, p := range dist {
 		floored := applyDamageFloor(val + attacks.Modifier)
@@ -104,7 +102,6 @@ func scaleByAttackerCount(
 	count int,
 ) map[int]float64 {
 
-	// Start with zero total attacks
 	unitDist := map[int]float64{0: 1.0}
 
 	// Convolve the per-model distribution `count` times

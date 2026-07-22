@@ -108,6 +108,40 @@ func TestCalculateFailedSaveProbability(t *testing.T) {
 			// Total fail: (1/6) + (1/6 * 2/6) = 6/36 + 2/36 = 8/36 = 2/9
 			expectedFailChance: 2.0 / 9.0,
 		},
+		{
+			// Invulnerable (4+) is better than the armor save (6+), so it wins.
+			name:               "Invulnerable Save Beats Worse Armor Save",
+			ap:                 0,
+			save:               6,
+			invulnerable:       intPtr(4),
+			saveModifier:       0,
+			hasCover:           false,
+			saveReroll:         RerollNone,
+			expectedFailChance: 3.0 / 6.0,
+		},
+		{
+			// Save 6+ vs AP 2 needs 8+, beyond the rollable 6+: auto-fail.
+			name:               "Target Beyond 6+ Auto-Fails",
+			ap:                 2,
+			save:               6,
+			invulnerable:       nil,
+			saveModifier:       0,
+			hasCover:           false,
+			saveReroll:         RerollNone,
+			expectedFailChance: 1.0,
+		},
+		{
+			// Reroll Fail Test: base fail 2/6, both the original roll and its
+			// reroll must fail, so total fail = (2/6)^2 = 1/9.
+			name:               "Save 3+ with Reroll Fails",
+			ap:                 0,
+			save:               3,
+			invulnerable:       nil,
+			saveModifier:       0,
+			hasCover:           false,
+			saveReroll:         RerollFail,
+			expectedFailChance: 1.0 / 9.0,
+		},
 	}
 
 	for _, tt := range tests {

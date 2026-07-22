@@ -26,7 +26,6 @@ definitions:
       devastating_wounds:
         type: boolean
       hit_modifier:
-        description: Modifiers (e.g., -1 to hit is -1)
         type: integer
       lethal_hits:
         type: boolean
@@ -59,9 +58,7 @@ definitions:
       request_uuid:
         type: string
       summary:
-        allOf:
-        - $ref: '#/definitions/damagerequest.SummaryDTO'
-        description: Grouped or flattened as you prefer, but separate from the core
+        $ref: '#/definitions/damagerequest.SummaryDTO'
     type: object
   damagerequest.DistributionsDTO:
     properties:

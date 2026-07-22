@@ -51,32 +51,22 @@ func CalculateSingleHitDistribution(
 			continue
 		}
 
-		// 2. Determine Outcome for this Face
 		outcome := resolveDieOutcome(face, bs, hitModifier, criticalThreshold, lethalHits, sustainedHits)
-
-		// 3. Add to Distribution
 		dist[outcome] += prob
 	}
 
 	return dist
 }
 
-// Helper: Determine what happens on a specific physical die roll
+// Determine what happens on a specific physical die roll.
 func resolveDieOutcome(face int, bs int, mod int, critThreshold int, lethal bool, sustained int) HitOutcome {
 	// Critical Hits are usually based on Unmodified rolls in 10th
 	isCrit := face >= critThreshold // e.g., 6 >= 6
 
-	// Calculate Modified Roll for standard hits
-	modRoll := face + mod
-	if modRoll > 6 {
-		modRoll = 6
-	}
-	if modRoll < 1 {
-		modRoll = 1
-	}
+	modRoll := clampToD6Range(face + mod)
 
-	// Check Hit (Nat 1 always fails, Nat 6 always succeeds usually, but Criticals override)
-	// In 10th: Unmodified 6 is Critical Hit (auto hit). Unmodified 1 is fail.
+	// A natural 1 always fails and a natural 6 is a Critical Hit (auto-success);
+	// Criticals override the modified-roll check entirely.
 	isHit := isCrit || (modRoll >= bs && face != 1)
 
 	if !isHit {
@@ -85,15 +75,13 @@ func resolveDieOutcome(face int, bs int, mod int, critThreshold int, lethal bool
 
 	outcome := HitOutcome{}
 
-	// Apply Lethal Hits
 	if isCrit && lethal {
 		outcome.LethalHits = 1
 	} else {
 		outcome.NormalHits = 1
 	}
 
-	// Apply Sustained Hits (Add X *additional* hits)
-	// Sustained hits are normally treated as Normal Hits (they don't trigger Lethals recursively)
+	// Sustained hits are treated as Normal Hits; they don't trigger Lethals recursively.
 	if isCrit && sustained > 0 {
 		outcome.NormalHits += sustained
 	}
@@ -101,12 +89,22 @@ func resolveDieOutcome(face int, bs int, mod int, critThreshold int, lethal bool
 	return outcome
 }
 
-// Helper: Handle Reroll Logic to get P(Face)
+// clampToD6Range clamps a modified roll into the valid [1, 6] die range.
+func clampToD6Range(v int) int {
+	if v > 6 {
+		return 6
+	}
+	if v < 1 {
+		return 1
+	}
+	return v
+}
+
+// Reroll logic: computes P(Face) for each die face under rerollType.
 func resolveRerolls(bs, mod int, reroll RerollType) map[int]float64 {
 	probs := make(map[int]float64)
 	base := 1.0 / 6.0
 
-	// Initial Rolls
 	for i := 1; i <= 6; i++ {
 		probs[i] = base
 	}
@@ -115,7 +113,6 @@ func resolveRerolls(bs, mod int, reroll RerollType) map[int]float64 {
 		return probs
 	}
 
-	// Calculate Reroll Pool
 	rerollPool := 0.0
 	shouldReroll := func(face int) bool {
 		if reroll == RerollOnes {
@@ -123,13 +120,7 @@ func resolveRerolls(bs, mod int, reroll RerollType) map[int]float64 {
 		}
 		if reroll == RerollFail {
 			// Fail check: Nat 1 or Modified < BS
-			modRoll := face + mod
-			if modRoll > 6 {
-				modRoll = 6
-			}
-			if modRoll < 1 {
-				modRoll = 1
-			}
+			modRoll := clampToD6Range(face + mod)
 			return face == 1 || modRoll < bs
 		}
 		return false
