@@ -20,6 +20,18 @@ TESTS:
   - [ ] error cases
   - [ ] invariants / properties
 
-POLICY EXCEPTION:
-- Required: no
+DORMANT FEATURE: yes | no
+- If yes:
+  - What feature/rule does it implement?
+  - Coverage (choose one):
+    - [ ] full test suite (dormant behavior itself verified correct)
+    - [ ] regression guard test (fails if activated without verification)
+
+COMMENTS: yes | no
+- If yes, reason (choose one):
+  - [ ] complex math the code's structure can't convey on its own (briefly: what)
+  - [ ] external rule / domain constraint the code's structure can't convey (briefly: what/source)
+  - [ ] was compensating for unclear code — reworked and removed (briefly: method used)
+
+POLICY EXCEPTION: yes | no
 - If yes, explain which rule is broken and why.
