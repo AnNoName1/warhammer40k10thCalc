@@ -44,6 +44,14 @@ repos:
         types: [go]
         pass_filenames: true
 
+      - id: check-policy-version
+        name: Check Commit Policy Version Sync
+        entry: bash ./scripts/check-policy-version.sh
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
       - id: check-commit-message
         name: Check Commit Message Format
         entry: bash ./scripts/validate-commit-msg.sh

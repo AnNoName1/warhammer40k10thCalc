@@ -31,6 +31,12 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Check Commit Policy Version Sync
+        run: bash ./scripts/check-policy-version.sh
+
+      - name: Test Commit Policy Version Checker
+        run: bash ./scripts/check-policy-version_test.sh
+
       - name: Validate Commit Message Policy
         run: |
           set -e

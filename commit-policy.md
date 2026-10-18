@@ -1,5 +1,7 @@
 # Commit Policy
 
+POLICY_VERSION: 1
+
 ## Core Guarantees (Non-Negotiable)
 
 1. Every commit MUST build.
@@ -120,3 +122,22 @@ Any commit that changes:
 - enforcement mechanisms
 
 MUST update this document and explain the change.
+
+### Policy Version Sync
+
+The commit format is defined in three places that MUST stay in sync:
+- `commit-policy.md` (this document),
+- `.gitmessage` (commit template),
+- `scripts/validate-commit-msg.sh` (commit-msg validator).
+
+Each file carries a `POLICY_VERSION: <N>` marker. Any change to the commit
+format or its fields (adding, removing, renaming a field, changing allowed
+values or types, changing validation rules) MUST increment the version in
+all three files in the same commit.
+
+`scripts/check-policy-version.sh` enforces that all three markers hold the
+same number. The check is stateless: it compares the current contents of
+the three files only and does not inspect history or diffs, so it cannot
+tell whether a given change required a bump — that remains the author's
+responsibility. It runs as a blocking step in the `pre-commit` hook and in
+CI (`Remote-Push Guard` workflow).
