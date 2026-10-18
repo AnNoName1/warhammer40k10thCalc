@@ -25,9 +25,11 @@ pre-commit → pre-push → commit → remote-push → MR → nightly(not implem
 | go test -short                     | Δ     | pre-commit  | Fast logic guard                          |
 | add-license (check)                | Δ     | pre-commit  | Mechanical invariant                      |
 | commit message policy              | Σ     | pre-commit      | Metadata-only rule                    |
+| commit policy version sync         | Σ     | pre-commit  | `POLICY_VERSION` equal in policy files    |
 | add-license (enforce)              | Σ     | pre-push    | Repo-wide consistency                     |
 | swag-fmt                           | Δ     | pre-push    | Generated artifact hygiene                |
 | swag-init                          | Σ     | pre-push    | Spec drift detection                      |
+| **commit policy version sync (server)** | Σ | remote-push | Trust reset; stateless file comparison |
 | **commit message policy (server)** | Σ     | remote-push | Trust reset                               |
 | **gofmt (server)**                 | Δ     | remote-push | Duplicate critical invariant              |
 | **go vet (server)**                | Δ     | remote-push | Duplicate critical invariant              |
@@ -58,10 +60,20 @@ pre-commit → pre-push → commit → remote-push → MR → nightly(not implem
 Steps (strict order):
 
 1. checkout (`fetch-depth: 0`)
-2. commit message check
-3. gofmt (Δ)
-4. go vet (Δ)
-5. add-license (check)
+2. commit policy version sync check (`scripts/check-policy-version.sh`)
+3. commit policy version checker tests (`scripts/check-policy-version_test.sh`)
+4. commit message check
+5. gofmt (Δ)
+6. go vet (Δ)
+7. add-license (check)
+
+**Commit policy version sync:** the commit format is defined in
+`commit-policy.md`, `.gitmessage` and `scripts/validate-commit-msg.sh`; each
+carries a `POLICY_VERSION: <N>` marker. The check fails, naming the
+mismatched file, unless all three numbers are equal. It is stateless —
+compares current file contents only, never history or diffs — and runs as
+a blocking step both here and in the local `pre-commit` hook. Bump rule:
+`commit-policy.md`, *Policy Version Sync*.
 
 ---
 
@@ -167,6 +179,7 @@ nightly (detached)
 ## Global Invariants Enforced
 
 * No malformed commit reaches shared history
+* Commit policy, commit template and commit-msg validator never diverge in `POLICY_VERSION`
 * No build- or unit-test–breaking commit reaches main
 * No silent API breaking change merges without explicit approval
 * Expensive checks are amortized at MR or nightly level

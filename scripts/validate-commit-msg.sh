@@ -19,6 +19,9 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
+# POLICY_VERSION: 1
+# Must match commit-policy.md and .gitmessage; see scripts/check-policy-version.sh.
+
 set -euo pipefail
 
 # Quote variable to handle Windows paths with spaces
