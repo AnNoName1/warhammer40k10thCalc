@@ -49,6 +49,9 @@ jobs:
             bash ./scripts/validate-commit-msg.sh .tmp_msg
           done
 
+      - name: Policy Flags Scanner Tests
+        run: bash ./scripts/scan-policy-flags_test.sh
+
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
