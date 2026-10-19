@@ -33,19 +33,31 @@ if ! echo "$COMMIT_MSG" | grep -qE "$TYPE_REGEX(\(.*\))?: .*"; then
 fi
 
 # 2. Mandatory Fields (Literal match)
-for field in "ATOMICITY:" "TESTS:"; do
+for field in "ATOMICITY:" "TESTS:" "DORMANT FEATURE:" "COMMENTS:"; do
   if ! echo "$COMMIT_MSG" | grep -q "$field"; then
     echo "ERROR: Missing mandatory field: $field"
     exit 1
   fi
 done
 
-# 3. Justification Logic (Check for non-whitespace content on next line)
-if echo "$COMMIT_MSG" | grep -q "POLICY EXCEPTION: yes"; then
-  # Extract line after the match, trim it, check if empty
-  JUSTIFICATION=$(grep -A 1 "POLICY EXCEPTION: yes" "$COMMIT_MSG_FILE" | tail -n 1 | xargs)
-  if [[ -z "$JUSTIFICATION" ]]; then
-    echo "ERROR: POLICY EXCEPTION: yes requires a justification on the following line."
-    exit 1
+# 3. Justification Logic (Check for non-whitespace content on next line).
+# Applies to every field where "yes" marks a notable/exception case that
+# commit-policy.md requires an explanation for.
+require_justification_if_yes() {
+  local field_label="$1"
+  if echo "$COMMIT_MSG" | grep -q "${field_label}: yes"; then
+    local justification
+    justification=$(awk -v pat="${field_label}: yes" '
+      found { print; exit }
+      $0 ~ pat { found=1 }
+    ' "$COMMIT_MSG_FILE" | xargs)
+    if [[ -z "$justification" ]]; then
+      echo "ERROR: ${field_label}: yes requires a justification on the following line."
+      exit 1
+    fi
   fi
-fi
+}
+
+for field_label in "POLICY EXCEPTION" "DORMANT FEATURE" "COMMENTS"; do
+  require_justification_if_yes "$field_label"
+done
