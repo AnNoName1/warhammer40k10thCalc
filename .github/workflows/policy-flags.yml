@@ -48,7 +48,8 @@ jobs:
           echo "labels=$(cut -f1 flags.tsv | sort -u | paste -sd' ' -)" >> "$GITHUB_OUTPUT"
 
       # Labels are only ever added, so they accumulate across pushes; the
-      # issues API ignores labels already present and creates missing ones.
+      # issues API ignores labels already present on the PR. --force keeps
+      # the repo label yellow even if it was created earlier in another color.
       - name: Apply labels
         if: steps.scan.outputs.labels != ''
         continue-on-error: true
@@ -58,5 +59,8 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           args=()
-          for flag in $FLAGS; do args+=(-f "labels[]=policy:$flag"); done
+          for flag in $FLAGS; do
+            gh label create "policy:$flag" --repo "$GITHUB_REPOSITORY" --color FBCA04 --force > /dev/null
+            args+=(-f "labels[]=policy:$flag")
+          done
           gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/labels" "${args[@]}" > /dev/null

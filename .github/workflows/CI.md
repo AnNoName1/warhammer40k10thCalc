@@ -141,7 +141,7 @@ Steps:
 
 1. scan PR commit messages (`scripts/scan-policy-flags.sh`, exits 0)
 2. write flag → commit table to step summary
-3. add `policy:*` labels (`continue-on-error`)
+3. add yellow `policy:*` labels (`continue-on-error`)
 
 ---
 
