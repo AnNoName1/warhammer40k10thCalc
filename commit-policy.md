@@ -96,6 +96,30 @@ If any rule is intentionally broken, the commit MUST declare:
 - `POLICY EXCEPTION: yes`
 - with justification.
 
+## Break-glass Visibility
+
+Declarations that relax a rule are surfaced on the pull request, not
+blocked. Each PR commit (merges excluded) is scanned, and the PR is
+labeled when any commit declares:
+
+| Declaration                                   | Label                       |
+| --------------------------------------------- | --------------------------- |
+| `ATOMICITY: no`                               | `policy:atomicity-no`       |
+| `DORMANT FEATURE: yes`                        | `policy:dormant-feature`    |
+| `COMMENTS: yes`                               | `policy:comments`           |
+| `POLICY EXCEPTION: yes`                       | `policy:policy-exception`   |
+| `TESTS` missing, or all its checkboxes empty  | `policy:tests-unconfirmed`  |
+| A field above with no single yes/no value     | `policy:ambiguous-template` |
+
+Both the inline form (`ATOMICITY: no`) and the template block form
+(`ATOMICITY:` followed by `- Atomic: no`) count. A value that is not
+exactly one of yes/no (untouched `yes | no`, free text, empty block,
+conflicting repeats) is not guessed and is labeled ambiguous instead.
+
+The scan judges no correctness and never fails; rejecting malformed
+messages remains the commit-msg validator's job. Labels only accumulate;
+they are never removed automatically.
+
 ## Commit Types
 
 Allowed types:

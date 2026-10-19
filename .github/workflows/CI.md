@@ -29,6 +29,7 @@ pre-commit → pre-push → commit → remote-push → MR → nightly(not implem
 | swag-fmt                           | Δ     | pre-push    | Generated artifact hygiene                |
 | swag-init                          | Σ     | pre-push    | Spec drift detection                      |
 | **commit message policy (server)** | Σ     | remote-push | Trust reset                               |
+| **policy flags scanner tests**     | Σ     | remote-push | Scanner correctness; scanner never fails  |
 | **gofmt (server)**                 | Δ     | remote-push | Duplicate critical invariant              |
 | **go vet (server)**                | Δ     | remote-push | Duplicate critical invariant              |
 | **build**                          | Σ     | remote-push | Graph completeness                        |
@@ -41,6 +42,7 @@ pre-commit → pre-push → commit → remote-push → MR → nightly(not implem
 | golangci-lint                      | Δ     | MR          | Expensive static analysis                 |
 | integration tests                  | Σ     | MR          | Endpoint correctness                      |
 | code coverage threshold            | Σ     | MR          | Structural quality gate                   |
+| break-glass policy flags           | Δ     | MR          | Visibility only, never blocks             |
 | e2e tests                          | Σ     | nightly     | Flaky / infra-heavy                       |
 | load / stress tests                | Σ     | nightly     | Capacity validation                       |
 
@@ -59,9 +61,10 @@ Steps (strict order):
 
 1. checkout (`fetch-depth: 0`)
 2. commit message check
-3. gofmt (Δ)
-4. go vet (Δ)
-5. add-license (check)
+3. policy flags scanner tests
+4. gofmt (Δ)
+5. go vet (Δ)
+6. add-license (check)
 
 ---
 
@@ -129,6 +132,19 @@ Steps:
 
 ---
 
+#### Job: `policy-flags` (`policy-flags.yml`, non-blocking)
+
+**Target:** ~10s
+**Not a required check**
+
+Steps:
+
+1. scan PR commit messages (`scripts/scan-policy-flags.sh`, exits 0)
+2. write flag → commit table to step summary
+3. add yellow `policy:*` labels (`continue-on-error`)
+
+---
+
 ## Nightly CI (non-blocking) - not implemented yet
 
 #### Job: `system-tests`
@@ -157,7 +173,8 @@ MR:
    ├─ analysis
    ├─ linting-and-spec ─┐
    ├─ api-diff          ├─ merge gate
-   └─ build-and-test   ─┘
+   ├─ build-and-test   ─┘
+   └─ policy-flags (detached, labels only)
 
 nightly (detached)
 ```
