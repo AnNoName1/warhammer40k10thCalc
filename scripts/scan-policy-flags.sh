@@ -48,7 +48,7 @@ function block_value(s) {
   else sub(/^[ \t]*-[ \t]*/, "", s)
   return toupper(trim(s))
 }
-function resolve(v) {
+function resolve(v) { BROKEN(
   if (v ~ /^(YES|NO)[ \t]*\|/) return ""
   if (v ~ /^YES([^A-Z0-9_]|$)/) return "yes"
   if (v ~ /^NO([^A-Z0-9_]|$)/) return "no"
